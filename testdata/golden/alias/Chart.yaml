@@ -1,0 +1,16 @@
+apiVersion: v2
+name: alias
+version: 0.1.0
+dependencies:
+  - name: dep-a
+    version: 1.2.0
+    repository: oci://localhost:5001/charts
+    alias: first
+  - name: dep-a
+    version: 1.2.0
+    repository: oci://localhost:5001/charts
+    alias: second
+  - name: dep-a
+    version: 2.0.0
+    repository: oci://localhost:5001/charts
+    alias: third

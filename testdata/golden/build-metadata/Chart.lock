@@ -1,0 +1,6 @@
+dependencies:
+- name: dep-c
+  repository: oci://localhost:5001/charts
+  version: 1.0.0+build.1
+digest: sha256:d114f0c9fdd74069974c4231d78b8ab54620b2ab1fa6f07bd2a07888c95cb53c
+generated: "2026-09-24T10:26:55.500995+02:00"

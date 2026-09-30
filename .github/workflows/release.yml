@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      checks: write
+
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: ci
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: ubuntu-latest, goos: linux, goarch: amd64, native: true }
+          - { runner: ubuntu-latest, goos: linux, goarch: arm64 }
+          - { runner: macos-latest, goos: darwin, goarch: arm64, native: true }
+          - { runner: macos-latest, goos: darwin, goarch: amd64 }
+          - { runner: windows-latest, goos: windows, goarch: amd64, native: true, ext: .exe }
+          - { runner: windows-latest, goos: windows, goarch: arm64, ext: .exe }
+    defaults:
+      run:
+        shell: bash
+    env:
+      BIN: dist/forge-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          go build -trimpath \
+            -ldflags "-s -w -X main.Version=${GITHUB_REF_NAME#v}" \
+            -o "$BIN" ./cmd/forge
+
+      - name: Smoke test
+        if: matrix.native
+        run: |
+          out=$("./$BIN" --version)
+          echo "$out"
+          grep -qF "forge ${GITHUB_REF_NAME#v}" <<<"$out"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.BIN }}
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags and history for release notes
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: forge-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum forge-* > checksums.txt
+          cat checksums.txt
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          CURRENT_TAG="${{ github.ref_name }}"
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            NOTES=$(git log "${PREVIOUS_TAG}..${CURRENT_TAG}" --pretty=format:"- %s (%h)" --no-merges)
+          else
+            NOTES=$(git log "${CURRENT_TAG}" --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          if [ -z "$NOTES" ]; then
+            NOTES="No changes recorded."
+          fi
+
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          body: ${{ steps.release_notes.outputs.notes }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: dist/*
+
+      - name: Write summary
+        env:
+          NOTES: ${{ steps.release_notes.outputs.notes }}
+        run: |
+          {
+            echo "## Release ${{ github.ref_name }}"
+            echo
+            echo "| File | Size | sha256 |"
+            echo "|---|---|---|"
+            for f in dist/forge-*; do
+              echo "| \`$(basename "$f")\` | $(du -h "$f" | cut -f1) | \`$(sha256sum "$f" | cut -c1-64)\` |"
+            done
+            echo
+            echo "### Changes"
+            echo
+            echo "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"

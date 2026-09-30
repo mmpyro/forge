@@ -1,0 +1,4 @@
+depA:
+  enabled: true
+tags:
+  backend: true

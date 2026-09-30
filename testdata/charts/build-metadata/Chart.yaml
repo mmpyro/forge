@@ -1,0 +1,7 @@
+apiVersion: v2
+name: build-metadata
+version: 0.1.0
+dependencies:
+  - name: dep-c
+    version: 1.0.0+build.1
+    repository: oci://localhost:5001/charts

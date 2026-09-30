@@ -1,0 +1,13 @@
+apiVersion: v2
+name: condition-tags
+version: 0.1.0
+dependencies:
+  - name: dep-a
+    version: 1.2.0
+    repository: oci://localhost:5001/charts
+    condition: depA.enabled
+    tags:
+      - backend
+    import-values:
+      - child: exported
+        parent: fromA

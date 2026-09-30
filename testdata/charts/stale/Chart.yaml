@@ -1,0 +1,7 @@
+apiVersion: v2
+name: stale
+version: 0.1.0
+dependencies:
+  - name: dep-a
+    version: 1.0.0
+    repository: oci://localhost:5001/charts

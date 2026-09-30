@@ -1,0 +1,9 @@
+dependencies:
+- name: dep-a
+  repository: oci://localhost:5001/charts
+  version: 1.1.0
+- name: dep-b
+  repository: oci://localhost:5001/charts
+  version: 0.1.0
+digest: sha256:4c0a73ccc3b46fa450348902bd76c781d2e2177aae2cb8c2e31f10d89a4bad4d
+generated: "2026-09-24T10:26:56.196242+02:00"

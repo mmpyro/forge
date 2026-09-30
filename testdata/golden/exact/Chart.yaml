@@ -1,0 +1,10 @@
+apiVersion: v2
+name: exact
+version: 0.1.0
+dependencies:
+  - name: dep-a
+    version: 1.1.0
+    repository: oci://localhost:5001/charts
+  - name: dep-b
+    version: 0.1.0
+    repository: oci://localhost:5001/charts

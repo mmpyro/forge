@@ -1,0 +1,7 @@
+apiVersion: v2
+name: prerelease
+version: 0.1.0
+dependencies:
+  - name: dep-b
+    version: ">=0.2.0-0"
+    repository: oci://localhost:5001/charts

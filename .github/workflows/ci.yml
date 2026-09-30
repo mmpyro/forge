@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      checks: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Run unit tests with JUnit XML output
+        run: |
+          gotestsum \
+            --format testname \
+            --junitfile unit-results.xml \
+            -- -race ./...
+
+      - name: Cross-compile check (linux, darwin, windows)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -o /dev/null ./cmd/forge
+            echo "ok $target"
+          done
+
+      - name: Test report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Unit tests (${{ matrix.os }})
+          path: unit-results.xml
+          reporter: java-junit
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-results-${{ matrix.os }}
+          path: unit-results.xml
+
+  integration:
+    name: Integration and compat
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.1.4
+
+      - name: Install gotestsum
+        run: go install gotest.tools/gotestsum@latest
+
+      - name: Start registry and push fixtures
+        run: make fixtures
+
+      - name: Run integration tests with JUnit XML output
+        run: |
+          gotestsum \
+            --format testname \
+            --junitfile integration-results.xml \
+            -- -tags integration -count=1 ./test/integration/
+
+      - name: Test report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Integration tests
+          path: integration-results.xml
+          reporter: java-junit
+
+      - name: Helm 3 + Helm 4 compatibility gate
+        run: |
+          set -o pipefail
+          make compat 2>&1 | tee compat.log
+
+      - name: Compat summary
+        if: always()
+        run: |
+          [ -f compat.log ] || exit 0
+          ok=$(grep -c '^ok ' compat.log || true)
+          fail=$(grep -c '^FAIL ' compat.log || true)
+          {
+            echo "### Helm compatibility gate"
+            echo
+            echo "| Result | Count |"
+            echo "|---|---|"
+            echo "| ✅ ok | $ok |"
+            echo "| ❌ failed | $fail |"
+            if [ "$fail" -gt 0 ]; then
+              echo
+              echo "<details><summary>Failures</summary>"
+              echo
+              echo '```diff'
+              grep -A40 '^FAIL ' compat.log | head -300
+              echo '```'
+              echo "</details>"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-results
+          path: |
+            integration-results.xml
+            compat.log
+          if-no-files-found: ignore
+
+      - name: Stop registry
+        if: always()
+        run: make registry-down
+
+  summary:
+    name: Summary
+    runs-on: ubuntu-latest
+    needs: [unit, integration]
+    if: always()
+
+    steps:
+      - name: Write summary
+        run: |
+          icon() { case $1 in success) echo "✅";; skipped) echo "⏭️";; cancelled) echo "🚫";; *) echo "❌";; esac; }
+          {
+            echo "## CI summary"
+            echo
+            echo "| Job | Result |"
+            echo "|---|---|"
+            echo "| Unit tests | $(icon '${{ needs.unit.result }}') ${{ needs.unit.result }} |"
+            echo "| Integration and compat | $(icon '${{ needs.integration.result }}') ${{ needs.integration.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail if any job failed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
