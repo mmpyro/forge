@@ -16,27 +16,27 @@ forge dep build  ./my-chart   # download exactly what Chart.lock pins
 helm template my-release ./my-chart
 ```
 
-## Downloads (latest release)
+## Downloads (v1.0.0)
 
 Prebuilt binaries and `checksums.txt` are attached to every
-[GitHub release](https://github.com/mmarszalek/helm-forge/releases). The links
-below always point at the latest one.
+[GitHub release](https://github.com/mmpyro/forge/releases). The links
+below point at v1.0.0.
 
 | Platform | Asset | Download |
 |---|---|---|
-| macOS (Apple Silicon) | `forge-darwin-arm64` | [Download](https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-darwin-arm64) |
-| macOS (Intel) | `forge-darwin-amd64` | [Download](https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-darwin-amd64) |
-| Linux (x86_64) | `forge-linux-amd64` | [Download](https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-linux-amd64) |
-| Linux (ARM64) | `forge-linux-arm64` | [Download](https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-linux-arm64) |
-| Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-windows-amd64.exe) |
-| Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-windows-arm64.exe) |
+| macOS (Apple Silicon) | `forge-darwin-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-darwin-arm64) |
+| macOS (Intel) | `forge-darwin-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-darwin-amd64) |
+| Linux (x86_64) | `forge-linux-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-linux-amd64) |
+| Linux (ARM64) | `forge-linux-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-linux-arm64) |
+| Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-windows-amd64.exe) |
+| Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-windows-arm64.exe) |
 
 Install on macOS / Linux:
 
 ```sh
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-curl -fsSL -o forge "https://github.com/mmarszalek/helm-forge/releases/latest/download/forge-$os-$arch"
+curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v1.0.0/forge-$os-$arch"
 chmod +x forge && sudo mv forge /usr/local/bin/
 forge --version
 ```
