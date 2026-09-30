@@ -1,0 +1,36 @@
+class HelmForge < Formula
+  desc "Fast drop-in replacement for helm dependency build/update (OCI only)"
+  homepage "https://github.com/mmpyro/forge"
+  version "@VERSION@"
+  license "MIT"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/mmpyro/forge/releases/download/v#{version}/forge-darwin-arm64"
+      sha256 "@SHA_DARWIN_ARM64@"
+    end
+    on_intel do
+      url "https://github.com/mmpyro/forge/releases/download/v#{version}/forge-darwin-amd64"
+      sha256 "@SHA_DARWIN_AMD64@"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/mmpyro/forge/releases/download/v#{version}/forge-linux-arm64"
+      sha256 "@SHA_LINUX_ARM64@"
+    end
+    on_intel do
+      url "https://github.com/mmpyro/forge/releases/download/v#{version}/forge-linux-amd64"
+      sha256 "@SHA_LINUX_AMD64@"
+    end
+  end
+
+  def install
+    bin.install Dir["forge-*"].first => "forge"
+  end
+
+  test do
+    assert_match "forge #{version}", shell_output("#{bin}/forge --version")
+  end
+end

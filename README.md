@@ -16,6 +16,16 @@ forge dep build  ./my-chart   # download exactly what Chart.lock pins
 helm template my-release ./my-chart
 ```
 
+## Install with Homebrew (macOS / Linux)
+
+```sh
+brew tap mmpyro/forge https://github.com/mmpyro/forge
+brew install helm-forge
+forge --version
+```
+
+Upgrade with `brew update && brew upgrade helm-forge`.
+
 ## Downloads (v1.0.0)
 
 Prebuilt binaries and `checksums.txt` are attached to every

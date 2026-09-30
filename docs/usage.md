@@ -2,6 +2,16 @@
 
 ## Install
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew tap mmpyro/forge https://github.com/mmpyro/forge
+brew install helm-forge
+forge --version
+```
+
+Upgrade with `brew update && brew upgrade helm-forge`.
+
 ### Prebuilt binaries
 
 Prebuilt binaries and `checksums.txt` are attached to every
