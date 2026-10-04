@@ -5,7 +5,8 @@
 </p>
 
 `forge` replaces `helm dependency build` / `helm dependency update` for charts
-whose dependencies live in OCI registries. It writes the same `charts/*.tgz`
+whose dependencies live in OCI registries, classic chart repositories
+(`https://…/index.yaml`) or local `file://` directories. It writes the same `charts/*.tgz`
 and `Chart.lock` that Helm would, so `helm template`, `helm install` and
 `helm package` keep working unchanged — they just get their dependencies
 faster.
@@ -80,13 +81,20 @@ To build from source, see [Usage → Install](docs/usage.md#install).
 Supported:
 
 - `apiVersion: v2` charts
-- dependencies with `repository: oci://…`
+- dependencies with `repository:`
+  - `oci://…` — OCI registries
+  - `https://…` / `http://…` — classic chart repositories, whether or not
+    they were added with `helm repo add`
+  - `@name` / `alias:name` — repositories from Helm's `repositories.yaml`
+    (credentials and TLS settings are used too)
+  - `file://…` — local chart directories, packaged like Helm does
 - exact versions and semver ranges (same resolver rules as Helm)
 - aliases, conditions/tags, prerelease and build-metadata versions
 
 Not supported (forge exits before any network call):
 
-- `https://` chart repositories, `file://` and `@alias` repositories
+- dependencies without a `repository` (unpacked in `charts/`) and other
+  schemes (`s3://`, plugin getters)
 - `apiVersion: v1` charts
 
 Not implemented yet: `push`/`pull`, `package`, adaptive concurrency, HTTP/3.

@@ -7,19 +7,23 @@ cmd/forge ─► internal/cli ─► internal/engine
                                │
              ┌─────────────────┼──────────────────────────────┐
              ▼                 ▼                              ▼
-         chartmeta          resolve ──► registry          fetch ──► registry
-     (Chart.yaml/lock)    (ranges → tags)    ▲          (manifest + blob)
-                                             │                 │
-                                            par ◄──────────────┤
-                                     (auth-aware fan-out)      ▼
-                                                             store
-                                                        (CAS cache)
-                                                               │
-                                                               ▼
-                                                         materialize
+         chartmeta          resolve ──┬─► registry ◄──┬─── fetch
+     (Chart.yaml/lock)   (constraints │  (OCI tags,   │  (parallel, dedupe)
+         repoconfig       → versions) │   manifest,   │       │
+    (@name, creds, TLS)               │   blob)       │       │
+                                      └─► chartrepo ◄─┘       │
+                                         (index.yaml,         │
+                                          archives)           │
+                                  par: auth-aware fan-out     │
+                                  for both, by host           ▼
+                                                            store ◄── file:// deps are
+                                                         (CAS cache)  packaged locally
+                                                              │       (chartutil.Save)
+                                                              ▼              │
+                                                         materialize ◄───────┘
                                                      (staging → charts/)
-                                                               │
-                                                               ▼
+                                                              │
+                                                              ▼
                                                    chartmeta.WriteLock
                                                    (update only, lockdigest)
 ```
@@ -29,16 +33,23 @@ cmd/forge ─► internal/cli ─► internal/engine
 1. `chartmeta.Load` reads the chart with Helm's own loader (so dependency
    fields are sanitised exactly as Helm does before hashing). `apiVersion: v1`
    is rejected.
-2. Non-`oci://` dependencies are rejected — before any network call.
-3. `resolve.Resolve` turns ranges into versions. Exact versions skip the
-   registry. Each range repository's `tags/list` is fetched once.
-4. `install` fetches every locked dependency (see below). Any failure → stop,
-   `charts/` untouched.
+2. `prepare` checks every repository before any network call: `oci://`,
+   `http(s)://`, `file://` (directory must exist) and `@name`/`alias:name`
+   (must be in `repositories.yaml`; replaced by its URL, which is what Helm
+   hashes and locks). Anything else is rejected.
+3. `resolve.Resolve` turns constraints into versions:
+   - OCI: exact versions skip the registry; each range repository's
+     `tags/list` is fetched once.
+   - Chart repositories: always from `index.yaml` (once per repository per
+     run), so the lock gets the index's spelling, as in Helm.
+   - `file://`: the local chart's version, if it satisfies the constraint.
+4. `install` fetches every remote dependency and packages every `file://` one
+   (see below). Any failure → stop, `charts/` untouched.
 5. `lockdigest.Compute` hashes `[Chart.yaml deps, locked deps]`. If it equals
    the existing lock digest, `Chart.lock` is left alone; otherwise it is
    written byte-for-byte as Helm would.
 
-`dep build`: load → reject unsupported → verify the lock digest → `install`.
+`dep build`: load → `prepare` → verify the lock digest → `install`.
 No lock at all → run `update`.
 
 ## Packages
@@ -49,21 +60,27 @@ No lock at all → run `update`.
 | `engine` | `Build` / `Update` orchestration, `DependencyError` |
 | `chartmeta` | Load `Chart.yaml`/`Chart.lock` via Helm v4 SDK, write `Chart.lock` |
 | `lockdigest` | Re-implementation of Helm's lock digest (Helm's is in an unimportable `internal/` package) |
-| `resolve` | Semver constraint → exact version via OCI `tags/list` |
-| `registry` | oras-go client: credentials, shared token cache, HTTP/2, limits, retries, error messages |
+| `resolve` | Semver constraint → exact version via OCI `tags/list`, `index.yaml` or the local `file://` chart |
+| `registry` | oras-go client: credentials, shared token cache, error messages; `registry.HTTP`: the run's HTTP/2 clients, limits and retries |
+| `chartrepo` | Classic chart repositories: `index.yaml` (parsed like Helm's `repo` package), archive URLs, credentials and TLS per repository |
+| `repoconfig` | Helm's `repositories.yaml`: `@name` resolution, credentials, TLS config |
 | `par` | `ByHost`: first request per host alone, then the rest in parallel |
-| `fetch` | Parallel scheduler, dedupe by repo:version and by digest, stream blob → store |
+| `fetch` | Parallel scheduler, dedupe by repo:version and by digest/URL, stream blob → store |
 | `store` | Content-addressed cache |
 | `materialize` | Place blobs into `charts/` via reflink → hardlink → copy, staging + swap |
 | `testutil/fakeregistry` | In-memory OCI registry for unit tests, with request log and fault injection |
+| `testutil/fakerepo` | In-memory chart repository for unit tests, with request log, basic auth and faults |
 
 ## Why it is fast
 
 ### One registry client per run
 
-`registry.New` builds one `http.Client` and one oras `auth.Client` for the
-whole process. All requests share connections (HTTP/2 when offered), the
-token cache and the concurrency limits.
+`registry.NewHTTP` builds the HTTP clients for the whole process, and
+`registry.New` one oras `auth.Client` on top of them. All requests share
+connections (HTTP/2 when offered), the token cache and the concurrency
+limits. Chart repositories use the same clients and limits; one with its own
+CA or client certificate gets a separate connection pool but the same
+request budget.
 
 ### One auth handshake per registry
 
@@ -80,9 +97,10 @@ Firing 40 requests at a cold registry would trigger 40 `401` challenges and
 
 | Run | Requests |
 |---|---|
-| Cold `dep build` | ≈ `2 × unique charts + 1 per registry` (manifest + blob per chart, one auth round) |
+| Cold `dep build` | ≈ `2 × unique OCI charts + 1 per registry` (manifest + blob per chart, one auth round), plus `1 × unique chart-repository charts + 1 index.yaml per repository` |
 | Warm `dep build` | `0` |
-| `dep update` | adds one `tags/list` per repository that has a range constraint |
+| `dep update` | adds one `tags/list` per OCI repository that has a range constraint, and one `index.yaml` per chart repository |
+| `file://` | `0` — packaged locally every run |
 
 The integration tests assert these numbers through a counting proxy. Changing
 fetch or auth ordering can break them.
@@ -116,6 +134,7 @@ request. Policy: `408`, `429`, `5xx`, network errors; 3 retries;
 $HELM_FORGE_CACHE/
   blobs/sha256/<hex>                 chart archives, mode 0444
   refs/<registry>/<repo>/<version>   JSON: manifest digest, layer digest, size, fetched_at
+  refs/<scheme>/<host>/<path>/<chart>/<version>   same for chart repositories, plus the archive file name
   tmp/                               in-flight writes
 ```
 
@@ -160,3 +179,15 @@ forge's output must match real Helm, not a spec of Helm:
   `helm template` output.
 - Resolver details copied from Helm: only strict semver tags count, `_` in a
   tag is read as `+`, exact versions are not looked up, highest match wins.
+- Chart repository details copied from Helm: `index.yaml` is parsed strictly,
+  invalid entries are dropped and versions sorted as Helm's `repo` package
+  does; entries without URLs are skipped; archive URLs resolve relative to the
+  repository URL; the archive keeps its URL's file name; credentials go only
+  to the repository's scheme and host unless `pass_credentials_all`.
+- `file://` charts are archived with Helm's `chartutil.Save`, so the tar
+  stream matches Helm 4's for the same directory (tar mtimes come from the
+  files). The gzip bytes can differ when forge and Helm were built with
+  different Go versions, and Helm 3 stamps entries with the current time, so
+  `make compat` compares these archives by member names and contents.
+- One deliberate difference: `helm dependency build` refuses chart repository
+  URLs that were never `helm repo add`-ed; forge fetches them anonymously.

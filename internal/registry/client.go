@@ -36,6 +36,7 @@ type Options struct {
 	Limits          Limits
 	RequestTimeout  time.Duration
 	UserAgent       string
+	HTTP            *HTTP // shared clients; nil builds them from Limits and RequestTimeout
 }
 
 // ChartManifest is what forge needs from a chart's manifest.
@@ -68,8 +69,12 @@ func New(o Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load registry credentials %s: %w", o.CredentialsFile, err)
 	}
+	h := o.HTTP
+	if h == nil {
+		h = NewHTTP(o.Limits, o.RequestTimeout)
+	}
 	ac := &auth.Client{
-		Client:     newHTTPClient(o.Limits, o.RequestTimeout),
+		Client:     h.Client(),
 		Cache:      auth.NewCache(),
 		Credential: credentials.Credential(store),
 	}

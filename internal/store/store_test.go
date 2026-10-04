@@ -114,6 +114,28 @@ func TestPutBlobConcurrentWritersSameDigest(t *testing.T) {
 	assertEmptyTmp(t, s)
 }
 
+func TestPutBlobStreamHashesWhileStoring(t *testing.T) {
+	s := newStore(t)
+	data := []byte("chart archive bytes")
+	for range 2 { // the second write finds the blob already there
+		d, n, p, err := s.PutBlobStream(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d != digest.FromBytes(data) || n != int64(len(data)) || p != s.BlobPath(d) {
+			t.Fatalf("got %s %d %s", d, n, p)
+		}
+		if got, _ := os.ReadFile(p); !bytes.Equal(got, data) {
+			t.Fatal("content differs")
+		}
+	}
+	assertEmptyTmp(t, s)
+	if _, _, _, err := s.PutBlobStream(iotest.ErrReader(errors.New("boom"))); err == nil {
+		t.Fatal("want reader error")
+	}
+	assertEmptyTmp(t, s)
+}
+
 func TestRefsRoundTrip(t *testing.T) {
 	s := newStore(t)
 	want := store.Ref{

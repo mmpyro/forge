@@ -1,0 +1,10 @@
+apiVersion: v2
+name: file-local
+version: 0.1.0
+dependencies:
+  - name: local-dep
+    version: ">=0.1.0"
+    repository: file://local-dep
+  - name: dep-a
+    version: 1.0.0
+    repository: oci://localhost:5001/charts

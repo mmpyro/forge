@@ -203,7 +203,7 @@ func TestOneTokenRequestPerRegistry(t *testing.T) {
 
 func TestInvalidRepositoryIsReportedPerItem(t *testing.T) {
 	e := newEnv(t)
-	results := e.f.Fetch(context.Background(), []fetch.Item{{Name: "x", Version: "1.0.0", Repository: "https://charts.example.com"}})
+	results := e.f.Fetch(context.Background(), []fetch.Item{{Name: "x", Version: "1.0.0", Repository: "s3://bucket/charts"}})
 	if results[0].Err == nil {
 		t.Fatal("want error")
 	}

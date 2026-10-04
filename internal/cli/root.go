@@ -41,7 +41,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func newRootCmd(out io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "forge",
-		Short:         "Fast dependency fetching for Helm charts in OCI registries",
+		Short:         "Fast dependency fetching for Helm charts",
 		Version:       versionText(),
 		SilenceErrors: true,
 		SilenceUsage:  true,

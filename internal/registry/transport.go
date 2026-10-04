@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
@@ -18,10 +19,9 @@ type Limits struct {
 	PerHost int
 }
 
-// limitTransport holds a slot per request until its body is closed, because
-// the transfer is still in progress after RoundTrip returns.
-type limitTransport struct {
-	base    http.RoundTripper
+// limiter hands out request slots from one global pool and one pool per
+// host. Transports sharing a limiter share its budget.
+type limiter struct {
 	global  chan struct{}
 	perHost int
 
@@ -29,39 +29,45 @@ type limitTransport struct {
 	hosts map[string]chan struct{}
 }
 
-func newLimitTransport(base http.RoundTripper, l Limits) *limitTransport {
-	return &limitTransport{
-		base:    base,
-		global:  make(chan struct{}, l.Global),
-		perHost: l.PerHost,
-		hosts:   map[string]chan struct{}{},
-	}
+func newLimiter(l Limits) *limiter {
+	return &limiter{global: make(chan struct{}, l.Global), perHost: l.PerHost, hosts: map[string]chan struct{}{}}
 }
 
-func (t *limitTransport) hostSlots(host string) chan struct{} {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	s, ok := t.hosts[host]
+func (l *limiter) hostSlots(host string) chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	s, ok := l.hosts[host]
 	if !ok {
-		s = make(chan struct{}, t.perHost)
-		t.hosts[host] = s
+		s = make(chan struct{}, l.perHost)
+		l.hosts[host] = s
 	}
 	return s
 }
 
+// limitTransport holds a slot per request until its body is closed, because
+// the transfer is still in progress after RoundTrip returns.
+type limitTransport struct {
+	base http.RoundTripper
+	lim  *limiter
+}
+
+func newLimitTransport(base http.RoundTripper, l Limits) *limitTransport {
+	return &limitTransport{base: base, lim: newLimiter(l)}
+}
+
 func (t *limitTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	ctx := req.Context()
-	host := t.hostSlots(req.URL.Host)
+	host := t.lim.hostSlots(req.URL.Host)
 	// Take the host slot first so a request waiting on a busy host does not
 	// hold a global slot another host could use.
 	if err := acquire(ctx, host); err != nil {
 		return nil, err
 	}
-	if err := acquire(ctx, t.global); err != nil {
+	if err := acquire(ctx, t.lim.global); err != nil {
 		<-host
 		return nil, err
 	}
-	release := sync.OnceFunc(func() { <-t.global; <-host })
+	release := sync.OnceFunc(func() { <-t.lim.global; <-host })
 	resp, err := t.base.RoundTrip(req)
 	if err != nil {
 		release()
@@ -119,15 +125,45 @@ func retryable(resp *http.Response, err error) (bool, error) {
 	return false, nil
 }
 
-// newHTTPClient is the one client forge uses for a whole run: HTTP/2 when
-// the server offers it, retries above the limiter (so a retry waits for a
-// free slot), and a per-request timeout.
-func newHTTPClient(l Limits, timeout time.Duration) *http.Client {
+// HTTP builds the HTTP clients of one run: HTTP/2 when the server offers
+// it, retries above the limiter (so a retry waits for a free slot), and a
+// per-request timeout. All its clients share one request budget, so OCI
+// registries and chart repositories together respect the Limits.
+type HTTP struct {
+	lim     *limiter
+	perHost int
+	timeout time.Duration
+	def     *http.Client
+}
+
+// NewHTTP builds the shared clients for one run.
+func NewHTTP(l Limits, timeout time.Duration) *HTTP {
+	h := &HTTP{lim: newLimiter(l), perHost: l.PerHost, timeout: timeout}
+	h.def = h.client(nil)
+	return h
+}
+
+// Client is the default client.
+func (h *HTTP) Client() *http.Client { return h.def }
+
+// WithTLS returns a client using cfg, e.g. for a chart repository with its
+// own CA or client certificate. Each call opens a new connection pool, so
+// callers keep the result.
+func (h *HTTP) WithTLS(cfg *tls.Config) *http.Client { return h.client(cfg) }
+
+func (h *HTTP) client(cfg *tls.Config) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.ForceAttemptHTTP2 = true
-	base.MaxIdleConnsPerHost = l.PerHost
-	return &http.Client{
-		Transport: &retry.Transport{Base: newLimitTransport(base, l), Policy: retryPolicy},
-		Timeout:   timeout,
+	base.MaxIdleConnsPerHost = h.perHost
+	if cfg != nil {
+		base.TLSClientConfig = cfg
 	}
+	return &http.Client{
+		Transport: &retry.Transport{Base: &limitTransport{base: base, lim: h.lim}, Policy: retryPolicy},
+		Timeout:   h.timeout,
+	}
+}
+
+func newHTTPClient(l Limits, timeout time.Duration) *http.Client {
+	return NewHTTP(l, timeout).Client()
 }
