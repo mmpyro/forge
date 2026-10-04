@@ -121,13 +121,15 @@ func retryable(resp *http.Response, err error) (bool, error) {
 
 // newHTTPClient is the one client forge uses for a whole run: HTTP/2 when
 // the server offers it, retries above the limiter (so a retry waits for a
-// free slot), and a per-request timeout.
-func newHTTPClient(l Limits, timeout time.Duration) *http.Client {
+// free slot), and a per-request timeout. Requests are counted into st.
+func newHTTPClient(l Limits, timeout time.Duration, st *stats) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.ForceAttemptHTTP2 = true
 	base.MaxIdleConnsPerHost = l.PerHost
+	attempts := &countingTransport{base: base, stats: st, attempt: true}
+	retrying := &retry.Transport{Base: newLimitTransport(attempts, l), Policy: retryPolicy}
 	return &http.Client{
-		Transport: &retry.Transport{Base: newLimitTransport(base, l), Policy: retryPolicy},
+		Transport: &countingTransport{base: retrying, stats: st},
 		Timeout:   timeout,
 	}
 }

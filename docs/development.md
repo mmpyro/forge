@@ -92,6 +92,7 @@ Targets (the script fails if missed):
 | `testdata/charts/<fixture>/` | Parent charts, one feature each: `alias`, `build-metadata`, `condition-tags`, `exact`, `nodeps`, `prerelease`, `ranges`, `stale` |
 | `testdata/seeds/<fixture>/` | Pre-existing `charts/` contents copied in before a run (e.g. `stale`) |
 | `testdata/golden/<fixture>/` | Helm-generated `Chart.yaml` + `Chart.lock` |
+| `internal/cli/testdata/json/` | `-o json` output goldens (durations, paths and placement normalised). Regenerate with `go test ./internal/cli -update` and review the diff |
 
 ### Adding a fixture
 

@@ -53,7 +53,7 @@ func Resolve(ctx context.Context, tl TagLister, deps []*chart.Dependency) ([]*ch
 	}
 
 	locked := make([]*chart.Dependency, len(deps))
-	var missing, hints []string
+	var missing []Missing
 	for i, d := range deps {
 		locked[i] = &chart.Dependency{Name: d.Name, Repository: d.Repository, Version: d.Version}
 		if repoOf[i] == "" {
@@ -68,16 +68,52 @@ func Resolve(ctx context.Context, tl TagLister, deps []*chart.Dependency) ([]*ch
 			}
 		}
 		if !found {
-			missing = append(missing, fmt.Sprintf("%q (repository %q, version %q)", d.Name, d.Repository, d.Version))
-			hints = append(hints, fmt.Sprintf("available versions of %s: %s", d.Name, nearest(tags[repoOf[i]])))
+			missing = append(missing, Missing{Index: i, Name: d.Name, Repository: d.Repository, Constraint: d.Version, Available: tags[repoOf[i]]})
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("can't get a valid version for %d subchart(s): %s. Make sure a matching chart version exists in the repo, or change the version constraint in Chart.yaml\n  %s",
-			len(missing), strings.Join(missing, ", "), strings.Join(hints, "\n  "))
+		return nil, &NoMatchError{Missing: missing}
 	}
 	return locked, nil
 }
+
+// Missing is a dependency whose constraint no tag satisfies.
+type Missing struct {
+	Index      int // position in the deps passed to Resolve
+	Name       string
+	Repository string
+	Constraint string
+	Available  []string // highest first
+}
+
+// Nearest lists up to five of the highest available versions, or "none".
+func (m Missing) Nearest() string { return nearest(m.Available) }
+
+// NoMatchError lists every dependency without a matching version.
+type NoMatchError struct{ Missing []Missing }
+
+func (e *NoMatchError) Error() string {
+	names := make([]string, len(e.Missing))
+	hints := make([]string, len(e.Missing))
+	for i, m := range e.Missing {
+		names[i] = fmt.Sprintf("%q (repository %q, version %q)", m.Name, m.Repository, m.Constraint)
+		hints[i] = fmt.Sprintf("available versions of %s: %s", m.Name, m.Nearest())
+	}
+	return fmt.Sprintf("can't get a valid version for %d subchart(s): %s. Make sure a matching chart version exists in the repo, or change the version constraint in Chart.yaml\n  %s",
+		len(e.Missing), strings.Join(names, ", "), strings.Join(hints, "\n  "))
+}
+
+// TagsError is a failure to list a repository's tags.
+type TagsError struct {
+	Repo string
+	Err  error
+}
+
+func (e *TagsError) Error() string {
+	return fmt.Sprintf("could not retrieve list of tags for repository %s: %v", e.Repo, e.Err)
+}
+
+func (e *TagsError) Unwrap() error { return e.Err }
 
 func listTags(ctx context.Context, tl TagLister, repos []string) (map[string][]string, error) {
 	var (
@@ -92,7 +128,7 @@ func listTags(ctx context.Context, tl TagLister, repos []string) (map[string][]s
 		defer mu.Unlock()
 		if err != nil {
 			if firstErr == nil {
-				firstErr = fmt.Errorf("could not retrieve list of tags for repository %s: %w", repo, err)
+				firstErr = &TagsError{Repo: repo, Err: err}
 			}
 			return
 		}

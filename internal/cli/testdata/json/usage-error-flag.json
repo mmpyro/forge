@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "command": "dep update",
+  "success": false,
+  "error": {
+    "code": "usage",
+    "message": "unknown flag: --bogus",
+    "hint": "run 'forge dep update --help'"
+  }
+}

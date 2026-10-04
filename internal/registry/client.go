@@ -49,6 +49,7 @@ type ChartManifest struct {
 type Client struct {
 	auth      *auth.Client
 	plainHTTP bool
+	stats     *stats
 
 	mu    sync.Mutex
 	repos map[string]*remote.Repository
@@ -68,14 +69,19 @@ func New(o Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load registry credentials %s: %w", o.CredentialsFile, err)
 	}
+	st := newStats()
 	ac := &auth.Client{
-		Client:     newHTTPClient(o.Limits, o.RequestTimeout),
+		Client:     newHTTPClient(o.Limits, o.RequestTimeout, st),
 		Cache:      auth.NewCache(),
 		Credential: credentials.Credential(store),
 	}
 	ac.SetUserAgent(o.UserAgent)
-	return &Client{auth: ac, plainHTTP: o.PlainHTTP, repos: map[string]*remote.Repository{}}, nil
+	return &Client{auth: ac, plainHTTP: o.PlainHTTP, stats: st, repos: map[string]*remote.Repository{}}, nil
 }
+
+// Stats reports the requests sent so far, per host, sorted by host. Token
+// servers and blob redirect targets appear as hosts of their own.
+func (c *Client) Stats() []HostStats { return c.stats.snapshot() }
 
 // RepoRef turns a Chart.yaml repository URL and chart name into an OCI
 // repository reference: ("oci://ghcr.io/acme/charts", "redis") → "ghcr.io/acme/charts/redis".

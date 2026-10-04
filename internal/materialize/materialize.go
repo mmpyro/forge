@@ -22,7 +22,7 @@ const stagingName = ".forge-staging"
 type Stage struct {
 	chartDir string
 	dir      string
-	files    map[string]bool
+	files    map[string]Method
 }
 
 // NewStage starts a fresh staging directory, deleting any left by a killed run.
@@ -34,7 +34,7 @@ func NewStage(chartDir string) (*Stage, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return &Stage{chartDir: chartDir, dir: dir, files: map[string]bool{}}, nil
+	return &Stage{chartDir: chartDir, dir: dir, files: map[string]Method{}}, nil
 }
 
 // Add stages the blob at blobPath as fileName (<name>-<version>.tgz).
@@ -43,15 +43,19 @@ func (s *Stage) Add(blobPath, fileName string) error {
 		strings.Contains(fileName, "..") || strings.Contains(fileName, "/") || strings.Contains(fileName, "\\") {
 		return fmt.Errorf("invalid archive name %q", fileName)
 	}
-	if s.files[fileName] {
+	if _, ok := s.files[fileName]; ok {
 		return nil
 	}
-	if err := place(blobPath, filepath.Join(s.dir, fileName)); err != nil {
+	m, err := place(blobPath, filepath.Join(s.dir, fileName))
+	if err != nil {
 		return err
 	}
-	s.files[fileName] = true
+	s.files[fileName] = m
 	return nil
 }
+
+// Placement reports how fileName was staged, or "" if it was not.
+func (s *Stage) Placement(fileName string) Method { return s.files[fileName] }
 
 // Commit moves staged archives into charts/ and removes chart archives that
 // are no longer dependencies, exactly as `helm dependency build` does: other
@@ -80,7 +84,7 @@ func (s *Stage) Commit() error {
 		}
 	}
 	for _, e := range existing {
-		if e.IsDir() || s.files[e.Name()] {
+		if _, staged := s.files[e.Name()]; e.IsDir() || staged {
 			continue
 		}
 		p := filepath.Join(charts, e.Name())

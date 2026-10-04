@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/singleflight"
 
@@ -37,6 +38,9 @@ type Result struct {
 	Item     Item
 	BlobPath string
 	Cached   bool // served from the cache without any request
+	Digest   digest.Digest
+	Size     int64
+	Duration time.Duration // time spent on this chart; aliases share it
 	Err      error
 }
 
@@ -78,17 +82,19 @@ func (f *Fetcher) Fetch(ctx context.Context, items []Item) []Result {
 		jobs[key] = j
 		order = append(order, j)
 	}
-	set := func(j *job, path string, cached bool, err error) {
+	set := func(j *job, r Result) {
 		for _, i := range j.idx {
-			results[i].BlobPath, results[i].Cached, results[i].Err = path, cached, err
+			r.Item = results[i].Item
+			results[i] = r
 		}
 	}
 
 	var misses []*job
 	for _, j := range order {
 		if !f.Refresh {
+			start := time.Now()
 			if ref, ok := f.Store.GetRef(j.repo, j.version); ok && f.Store.HasBlob(ref.Layer) {
-				set(j, f.Store.BlobPath(ref.Layer), true, nil)
+				set(j, Result{BlobPath: f.Store.BlobPath(ref.Layer), Cached: true, Digest: ref.Layer, Size: ref.Size, Duration: time.Since(start)})
 				continue
 			}
 		}
@@ -104,26 +110,28 @@ func (f *Fetcher) Fetch(ctx context.Context, items []Item) []Result {
 	}
 	ctx = registry.WithPullScopes(ctx, repos)
 	par.ByHost(ctx, misses, func(j *job) string { return registry.Host(j.repo) }, func(ctx context.Context, j *job) {
-		path, err := f.fetchOne(ctx, j.repo, j.version)
-		set(j, path, false, err) // each job owns distinct indices
+		start := time.Now()
+		r := f.fetchOne(ctx, j.repo, j.version)
+		r.Duration = time.Since(start)
+		set(j, r) // each job owns distinct indices
 	})
 	return results
 }
 
-func (f *Fetcher) fetchOne(ctx context.Context, repo, version string) (string, error) {
+func (f *Fetcher) fetchOne(ctx context.Context, repo, version string) Result {
 	cm, err := f.Registry.ChartManifest(ctx, repo, version)
 	if err != nil {
-		return "", err
+		return Result{Err: err}
 	}
 	path, err := f.blob(ctx, repo, cm.Layer)
 	if err != nil {
-		return "", err
+		return Result{Err: err}
 	}
 	ref := store.Ref{Manifest: cm.Manifest, Layer: cm.Layer.Digest, Size: cm.Layer.Size, FetchedAt: time.Now().UTC()}
 	if err := f.Store.PutRef(repo, version, ref); err != nil {
-		return "", fmt.Errorf("write cache entry: %w", err)
+		return Result{Err: fmt.Errorf("write cache entry: %w", err)}
 	}
-	return path, nil
+	return Result{BlobPath: path, Digest: cm.Layer.Digest, Size: cm.Layer.Size}
 }
 
 // blob returns layer's cached path, downloading it at most once even when

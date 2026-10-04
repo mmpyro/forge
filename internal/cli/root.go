@@ -33,6 +33,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stderr, "Error:", err)
 	var ue usageError
 	if errors.As(err, &ue) || strings.HasPrefix(err.Error(), "unknown command") {
+		if cmd, ok := jsonUsageCommand(args); ok {
+			usageJSON(stdout, cmd, err)
+		}
 		return 2
 	}
 	return 1

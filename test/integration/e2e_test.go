@@ -7,6 +7,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -53,12 +54,43 @@ func copyFixture(t *testing.T, name, host string) string {
 	return dst
 }
 
-func forge(t *testing.T, args ...string) {
+func forge(t *testing.T, args ...string) string {
 	t.Helper()
 	var out, errb bytes.Buffer
 	if code := cli.Run(context.Background(), args, &out, &errb); code != 0 {
 		t.Fatalf("forge %v: exit %d\n%s%s", args, code, out.String(), errb.String())
 	}
+	return out.String()
+}
+
+// result is the part of `-o json` output these tests check.
+type result struct {
+	Dependencies []struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	} `json:"dependencies"`
+	Registries []struct {
+		Host     string `json:"host"`
+		Requests int64  `json:"requests"`
+	} `json:"registries"`
+}
+
+func forgeJSON(t *testing.T, args ...string) result {
+	t.Helper()
+	var r result
+	out := forge(t, append(args, "-o", "json")...)
+	if err := json.Unmarshal([]byte(out), &r); err != nil {
+		t.Fatalf("forge %v: bad JSON: %v\n%s", args, err, out)
+	}
+	return r
+}
+
+func (r result) requests() int64 {
+	var n int64
+	for _, h := range r.Registries {
+		n += h.Requests
+	}
+	return n
 }
 
 func TestColdAndWarmRequestCounts(t *testing.T) {
@@ -88,17 +120,28 @@ func TestColdAndWarmRequestCounts(t *testing.T) {
 			t.Setenv("HELM_FORGE_CACHE", t.TempDir())
 			_ = os.RemoveAll(filepath.Join(dir, "charts"))
 			count.Store(0)
-			forge(t, "dep", "build", "--plain-http", "--registry-config", cfg, dir)
+			cold := forgeJSON(t, "dep", "build", "--plain-http", "--registry-config", cfg, dir)
 			if got, limit := count.Load(), int64(2*len(unique)+1); got > limit {
 				t.Errorf("cold build: %d registry requests, want <= %d", got, limit)
+			}
+			if got, want := cold.requests(), count.Load(); got != want {
+				t.Errorf("cold build: JSON reports %d requests, registry saw %d (%+v)", got, want, cold.Registries)
 			}
 
 			// Warm: same cache, charts/ deleted.
 			_ = os.RemoveAll(filepath.Join(dir, "charts"))
 			count.Store(0)
-			forge(t, "dep", "build", "--plain-http", "--registry-config", cfg, dir)
+			warm := forgeJSON(t, "dep", "build", "--plain-http", "--registry-config", cfg, dir)
 			if got := count.Load(); got != 0 {
 				t.Errorf("warm build: %d registry requests, want 0", got)
+			}
+			if len(warm.Registries) != 0 {
+				t.Errorf("warm build: JSON reports registries %+v, want none", warm.Registries)
+			}
+			for _, d := range warm.Dependencies {
+				if d.Status != "cached" {
+					t.Errorf("warm build: %s is %s, want cached", d.Name, d.Status)
+				}
 			}
 			if entries, _ := os.ReadDir(filepath.Join(dir, "charts")); len(entries) != len(unique) {
 				t.Errorf("charts/ has %d entries, want %d", len(entries), len(unique))
