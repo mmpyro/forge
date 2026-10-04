@@ -37,10 +37,16 @@ type Ref struct {
 // Store is a cache rooted at one directory.
 type Store struct{ root string }
 
-// DefaultRoot is $HELM_FORGE_CACHE, else ~/.cache/helm-forge.
+// DefaultRoot is $HELM_FORGE_CACHE, else $HELM_CACHE_HOME/forge when run as
+// a Helm plugin (Helm sets HELM_PLUGIN_DIR), else ~/.cache/helm-forge.
 func DefaultRoot() (string, error) {
 	if v := os.Getenv("HELM_FORGE_CACHE"); v != "" {
 		return v, nil
+	}
+	if os.Getenv("HELM_PLUGIN_DIR") != "" {
+		if v := os.Getenv("HELM_CACHE_HOME"); v != "" {
+			return filepath.Join(v, "forge"), nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

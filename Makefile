@@ -1,4 +1,4 @@
-.PHONY: test build registry-up registry-down fixtures golden test-integration helm3 compat bench
+.PHONY: test build registry-up registry-down fixtures golden test-integration helm3 compat bench plugin-smoke
 
 VERSION ?= 0.1.0
 LDFLAGS = -ldflags "-X main.Version=$(VERSION)"
@@ -33,3 +33,6 @@ compat: build fixtures helm3
 
 bench: build fixtures
 	scripts/bench.sh
+
+plugin-smoke:
+	scripts/plugin-smoke.sh

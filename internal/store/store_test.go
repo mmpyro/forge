@@ -187,6 +187,29 @@ func TestDefaultRootHonoursEnv(t *testing.T) {
 	}
 }
 
+func TestDefaultRootAsHelmPlugin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HELM_FORGE_CACHE", "")
+	t.Setenv("HELM_CACHE_HOME", "/helm/cache")
+
+	// HELM_CACHE_HOME alone (set in the user's shell) does not move the cache.
+	t.Setenv("HELM_PLUGIN_DIR", "")
+	if got, _ := store.DefaultRoot(); got != filepath.Join(home, ".cache", "helm-forge") {
+		t.Fatalf("outside plugin: got %s", got)
+	}
+
+	t.Setenv("HELM_PLUGIN_DIR", "/helm/plugins/forge")
+	if got, _ := store.DefaultRoot(); got != filepath.Join("/helm/cache", "forge") {
+		t.Fatalf("as plugin: got %s", got)
+	}
+
+	t.Setenv("HELM_FORGE_CACHE", "/somewhere/else")
+	if got, _ := store.DefaultRoot(); got != "/somewhere/else" {
+		t.Fatalf("HELM_FORGE_CACHE must win: got %s", got)
+	}
+}
+
 func TestCleanRemovesReadOnlyBlobs(t *testing.T) {
 	root := t.TempDir()
 	s, _ := store.Open(root)

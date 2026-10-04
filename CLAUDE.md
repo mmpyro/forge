@@ -20,6 +20,7 @@ make test-integration      # starts registry:2 on localhost:5001 (docker), pushe
 make compat                # Helm 3 + Helm 4 compatibility gate (scripts/compat.sh)
 make golden                # regenerate testdata/golden/* with real `helm dependency update`
 make bench                 # hyperfine: helm vs forge cold/warm, 40 deps behind toxiproxy +50ms
+make plugin-smoke          # helm plugin install of this checkout (helm + .bin/helm3), via a local fake release
 make registry-down         # stop the local registry container
 ```
 
@@ -27,7 +28,7 @@ make registry-down         # stop the local registry container
 - `make helm3` downloads Helm 3 into `.bin/helm3` (used by compat alongside `helm`).
 - Integration tests live in `test/integration/` behind the `integration` build tag; they talk to `localhost:5001` through a counting proxy and assert exact request counts.
 - Local registry is plain HTTP → pass `--plain-http` when running forge against it.
-- `HELM_FORGE_CACHE` overrides the cache root (default `~/.cache/helm-forge`).
+- `HELM_FORGE_CACHE` overrides the cache root (default `~/.cache/helm-forge`; `$HELM_CACHE_HOME/forge` when run as `helm forge`, detected via `HELM_PLUGIN_DIR`).
 
 ## Architecture
 
@@ -55,6 +56,7 @@ Invariants that span files:
 - Non-`oci://` dependencies are rejected before any network call; `apiVersion: v1` charts are unsupported.
 - Exit codes: `0` ok, `1` any dependency failed (`engine.DependencyError` lists each), `2` usage error (`cli.usageError`).
 - Credentials come only from Helm's registry config (`$HELM_REGISTRY_CONFIG` or helm's default path); missing file = anonymous.
+- **Distribution is the Helm plugin** (`plugin.yaml`, legacy format so Helm ≥3.18 and Helm 4 both load it). The install hooks (`scripts/install-plugin.{sh,ps1}`) download the release binary named by `plugin.yaml`'s `version` and verify it against `checksums.txt`. That `version` must equal the release tag; `release.yml` enforces it, so bump it before tagging.
 
 ## Test fixtures
 

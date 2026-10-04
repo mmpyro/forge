@@ -21,8 +21,21 @@ make test-integration   # registry:2 on localhost:5001, push fixtures, -tags int
 make compat             # Helm 3 + Helm 4 compatibility gate
 make golden             # regenerate testdata/golden/* with real helm
 make bench              # hyperfine: helm vs forge cold/warm
+make plugin-smoke       # helm plugin install of this checkout, for helm + .bin/helm3
 make registry-down      # stop the local registry
 ```
+
+`make plugin-smoke` (`scripts/plugin-smoke.sh`) builds the host binary into a
+fake release served on `127.0.0.1:18765` and points the install hook at it via
+`HELM_FORGE_PLUGIN_URL`. Then, for each helm in `$HELMS`, it checks:
+
+- a corrupted `checksums.txt` makes the install fail
+- `helm forge --version` and `helm forge cache path` work
+- if the registry is up (`make fixtures`), `helm forge dep update` gives the
+  same `charts/` and `Chart.lock` as standalone forge
+
+Helm 4's installer ignores `HELM_PLUGINS`, so the script isolates plugins with
+`HELM_DATA_HOME` instead.
 
 The local registry is plain HTTP — pass `--plain-http` when running forge
 against it by hand:
@@ -115,14 +128,16 @@ forge is wrong.
 | Job | Runs on | Does |
 |---|---|---|
 | `unit` | ubuntu, macos | `go test -race ./...` via gotestsum → JUnit test report; on ubuntu also cross-compiles for linux/darwin/windows × amd64/arm64 |
-| `integration` | ubuntu | `make fixtures`, integration tests → JUnit test report, `make compat` → summary table |
+| `integration` | ubuntu | `make fixtures`, integration tests → JUnit test report, `make compat` → summary table, `make plugin-smoke` |
+| `plugin` | ubuntu, macos, windows × Helm 3.22 / 4.1 | `scripts/plugin-smoke.sh`: install this checkout as a Helm plugin, checksum rejection, `helm forge --version` |
 | `summary` | ubuntu | Job results in the run summary; fails if any job failed |
 
 ## Releasing
 
 `.github/workflows/release.yml` runs when a `v*.*.*` tag is pushed:
 
-1. `ci` — the full CI workflow above. Nothing is built if it fails.
+1. `plugin-version` — `plugin.yaml`'s `version` must equal the tag (without
+   `v`); `ci` — the full CI workflow above. Nothing is built if either fails.
 2. `build` — matrix on ubuntu, macos and windows runners: `CGO_ENABLED=0`
    binaries for linux/darwin/windows × amd64/arm64, version set to the tag.
    The runner-native binary is smoke-tested (`forge --version` must print the
@@ -131,16 +146,23 @@ forge is wrong.
    tag, GitHub release with all binaries attached. Tags containing `-`
    (e.g. `v1.0.0-rc.1`) become prereleases. The run summary lists files,
    sizes, sha256 and changes.
+4. `plugin-smoke` — on ubuntu, macos and windows × Helm 3 / Helm 4:
+   `helm plugin install https://github.com/mmpyro/forge --version <tag>`
+   (`--verify=false` on Helm 4), then `helm forge --version` must print the tag.
 
 To cut a release:
 
+1. Set `version:` in `plugin.yaml` to the new version and merge that to `main`.
+2. Tag and push:
+
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 Asset names (`forge-<os>-<arch>`, `.exe` on Windows) are what the download
-links in `README.md` point at — keep them in sync.
+links in `README.md` and the plugin install hooks
+(`scripts/install-plugin.sh`, `scripts/install-plugin.ps1`) use. Keep them in sync.
 
 ## Invariants to keep in mind
 

@@ -2,15 +2,49 @@
 
 ## Install
 
-### Homebrew (macOS / Linux)
+### Helm plugin (recommended)
+
+Needs Helm 3.18+ or Helm 4. Works on macOS, Linux and Windows (amd64/arm64).
 
 ```sh
-brew tap mmpyro/forge https://github.com/mmpyro/forge
-brew install helm-forge
-forge --version
+# Helm 4
+helm plugin install https://github.com/mmpyro/forge --version v1.1.0 --verify=false
+# Helm 3
+helm plugin install https://github.com/mmpyro/forge --version v1.1.0
+
+helm forge --version
+helm forge dep build ./my-chart
 ```
 
-Upgrade with `brew update && brew upgrade helm-forge`.
+- `helm forge …` takes the same commands and flags as `forge …`.
+- The install hook (`scripts/install-plugin.sh`, or `install-plugin.ps1` on
+  Windows) downloads the release binary named by `plugin.yaml`'s version and
+  checks its sha256 against the release's `checksums.txt`. A mismatch aborts
+  the install.
+- Helm 4 verifies plugin signatures by default and can't verify a git source,
+  so it needs `--verify=false`. Helm 3 has no such flag.
+- Always pass `--version`: without it Helm installs from `main`, whose
+  `plugin.yaml` may name a release that isn't published yet. v1.1.0 is the
+  first version available as a plugin.
+- Helm passes its settings to the plugin: `--registry-config` /
+  `HELM_REGISTRY_CONFIG` work as with Helm itself, and the cache defaults to
+  `$HELM_CACHE_HOME/forge` (see [Environment](#environment)).
+- Set `HELM_FORGE_PLUGIN_URL` to download from a mirror of the GitHub releases
+  (it replaces `https://github.com/mmpyro/forge/releases/download`).
+
+Manage it like any plugin:
+
+```sh
+helm plugin update forge      # git pull + download the new binary
+helm plugin uninstall forge
+```
+
+**Moving from Homebrew.** The Homebrew tap is discontinued. Remove it and
+install the plugin:
+
+```sh
+brew uninstall helm-forge && brew untap mmpyro/forge
+```
 
 ### Prebuilt binaries
 
@@ -110,8 +144,9 @@ Per-request timeout is 60 s; failed requests are retried (see
 
 | Variable | Effect |
 |---|---|
-| `HELM_FORGE_CACHE` | Cache root. Default `~/.cache/helm-forge` |
+| `HELM_FORGE_CACHE` | Cache root. Default `~/.cache/helm-forge`, or `$HELM_CACHE_HOME/forge` when run as `helm forge` |
 | `HELM_REGISTRY_CONFIG` | Credentials file, same as Helm. Default: Helm's `registry/config.json` |
+| `HELM_FORGE_PLUGIN_URL` | Plugin install hook only: base URL for release downloads (mirror) |
 
 ## Authentication
 
@@ -182,7 +217,9 @@ Error: 2 dependencies failed:
 ## Caching in CI
 
 The cache is safe to share between concurrent forge processes and to restore
-from a CI cache. Example for GitHub Actions:
+from a CI cache. Example for GitHub Actions (with the plugin, use
+`helm forge cache path` and `helm forge dep build`: the plugin's cache lives
+under Helm's cache dir):
 
 ```yaml
 - id: forge-cache
