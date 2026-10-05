@@ -56,12 +56,12 @@ No lock at all → run `update`.
 
 | Package | Role |
 |---|---|
-| `cli` | cobra commands, flags, exit codes (`usageError` → 2) |
-| `engine` | `Build` / `Update` orchestration, `DependencyError` |
+| `cli` | cobra commands, flags, exit codes (`usageError` → 2), text and `-o json` output (`output.go`) |
+| `engine` | `Build` / `Update` orchestration; `Summary` with one `Dep` (status, digest, size, placement, problem) per dependency; `DependencyError` |
 | `chartmeta` | Load `Chart.yaml`/`Chart.lock` via Helm v4 SDK, write `Chart.lock` |
 | `lockdigest` | Re-implementation of Helm's lock digest (Helm's is in an unimportable `internal/` package) |
 | `resolve` | Semver constraint → exact version via OCI `tags/list`, `index.yaml` or the local `file://` chart |
-| `registry` | oras-go client: credentials, shared token cache, error messages; `registry.HTTP`: the run's HTTP/2 clients, limits and retries |
+| `registry` | oras-go client: credentials, shared token cache, error classification (`Classify` → `Problem` with a stable code); `registry.HTTP`: the run's HTTP/2 clients, limits, retries and per-host request counts |
 | `chartrepo` | Classic chart repositories: `index.yaml` (parsed like Helm's `repo` package), archive URLs, credentials and TLS per repository |
 | `repoconfig` | Helm's `repositories.yaml`: `@name` resolution, credentials, TLS config |
 | `par` | `ByHost`: first request per host alone, then the rest in parallel |
@@ -125,6 +125,46 @@ their own budget.
 Retries wrap the limiter, so a retry waits for a free slot like any other
 request. Policy: `408`, `429`, `5xx`, network errors; 3 retries;
 200 ms × 2ⁿ with 20 % jitter, or `Retry-After` up to 30 s.
+
+## The run report
+
+Every run builds an `engine.Summary`. The text output prints its counts; `-o json`
+(`cli/output.go`) prints all of it. It is filled even when the run fails, so a
+failed run still says what happened to each dependency.
+
+- **Per dependency** (`Summary.Deps`, in `Chart.yaml` order): status
+  (`cached`, `downloaded`, `local`, `failed`, `skipped`), locked version,
+  digest and size (from `fetch.Result`), how it was placed in `charts/`
+  (`materialize.Stage.Placement`) and how long it took.
+- **Errors are classified, not just printed.** `registry.Classify` maps OCI
+  errors, and `engine.repoProblem` maps chart repository errors, to a
+  `registry.Problem`: a stable `code`, the HTTP status, a message and a hint.
+  The text reason in `DependencyError` is derived from the same `Problem`, so
+  text and JSON can't disagree.
+- **Failures before fetching are attributed too.** `resolve.NoMatchError` and
+  `engine.UnsupportedError` are typed, so the dependencies they name are
+  `failed` and the rest `skipped`. Other early failures (lock out of sync,
+  unknown `@name`, timeout) go to the top-level `error`.
+- **Requests per host.** `registry.HTTP` wraps every client in two counting
+  transports: one below the retry layer (every attempt, and `401` challenges)
+  and one above it (logical requests); retries = attempts − logical. OCI
+  registries and chart repositories share one `HTTP`, so the counts cover
+  both. The integration tests check that these counts equal what the counting
+  proxies saw.
+
+## Distribution: the Helm plugin
+
+forge ships as a Helm plugin (`plugin.yaml`, legacy format so Helm ≥ 3.18 and
+Helm 4 both load it). `helm plugin install <repo> --version vX.Y.Z` clones the
+repository at that tag; the platform install hook
+(`scripts/install-plugin.sh` or `.ps1`) then downloads the release binary
+named by `plugin.yaml`'s `version` and checks it against `checksums.txt`.
+The release workflow refuses a tag that differs from that `version`.
+
+When Helm runs a plugin it sets `HELM_PLUGIN_DIR`, `HELM_CACHE_HOME`,
+`HELM_REGISTRY_CONFIG`, `HELM_REPOSITORY_CONFIG` and friends. forge reads
+these, so `helm forge` uses Helm's credentials and repositories and keeps its
+cache in `$HELM_CACHE_HOME/forge` (`store.DefaultRoot`).
 
 ## Why it is safe
 

@@ -71,7 +71,10 @@ reverse proxies, with no `repositories.yaml`, and assert:
 
 - cold `dep build` makes at most `2 × unique OCI charts + 1 × unique
   chart-repository charts + 1 per source` requests;
-- warm `dep build` makes **zero** requests;
+- the `-o json` report's `registries[].requests` add up to exactly what the
+  proxies counted;
+- warm `dep build` makes **zero** requests, reports no hosts, and every
+  dependency is `cached` (`local` for `file://`);
 - `charts/` has one entry per unique chart.
 
 If you change fetch or auth ordering and these fail, the request budget
@@ -108,6 +111,12 @@ Targets (the script fails if missed):
 - warm forge < 1 s
 
 `RUNS=10 make bench` changes the number of runs.
+
+The README's figure is a separate, real-world measurement: a parent chart with
+50 subcharts against a remote registry, forge with 14 of them already cached,
+helm with `--skip-refresh`:
+
+![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](../images/benchmark.png)
 
 ## Fixtures
 
@@ -168,12 +177,14 @@ forge is wrong.
 
 To cut a release:
 
-1. Set `version:` in `plugin.yaml` to the new version and merge that to `main`.
+1. Set `version:` in `plugin.yaml` to the new version (no `v`), update the
+   version in the install commands and download links in `README.md` and
+   `docs/usage.md`, and merge that to `main`.
 2. Tag and push:
 
 ```sh
-git tag v1.1.0
-git push origin v1.1.0
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 Asset names (`forge-<os>-<arch>`, `.exe` on Windows) are what the download

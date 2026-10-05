@@ -3,12 +3,13 @@
 # `version` must equal the release tag: the install hook downloads the binary of this version,
 # and the release workflow refuses to tag a mismatch.
 name: forge
-version: 1.1.0
-usage: Fast parallel `dependency build/update` for charts with OCI dependencies
+version: 2.0.0
+usage: Fast parallel `dependency build/update` for OCI, chart repository and file:// dependencies
 description: |-
   forge replaces `helm dependency build` / `helm dependency update` for charts
-  whose dependencies live in OCI registries. It writes the same charts/*.tgz and
-  Chart.lock that Helm would.
+  whose dependencies live in OCI registries, chart repositories (index.yaml) or
+  local file:// directories. It writes the same charts/*.tgz and Chart.lock that
+  Helm would.
   Example: helm forge dep update ./my-chart
 ignoreFlags: false
 platformCommand:
