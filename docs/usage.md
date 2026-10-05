@@ -137,6 +137,7 @@ Deletes the cache directory.
 | `--timeout` | `5m` | Time limit for the whole run |
 | `--registry-config` | Helm's path | Helm's registry credentials file |
 | `--repository-config` | Helm's path | Helm's `repositories.yaml` (`@name` repositories, credentials, TLS) |
+| `-o`, `--output` | `text` | `text` or `json` (see [JSON output](#json-output)) |
 
 Per-request timeout is 60 s; failed requests are retried (see
 [Errors and retries](#errors-and-retries)).
@@ -189,6 +190,122 @@ Saved 12 charts (9 cached, 3 downloaded) in 412ms
 Aliases of one chart count separately in `Saved`, but the archive is
 downloaded only once. Charts packaged from `file://` directories add
 `, N local` to the counts.
+
+### JSON output
+
+With `-o json`, `dep build` and `dep update` print one JSON document on
+stdout instead of the `Saved …` line. They print it on success and on failure. Errors still go to
+stderr as text, so `forge dep build -o json | jq` always gets valid JSON.
+Exit codes do not change.
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "dep build",
+  "chart": "./my-chart",
+  "success": false,
+  "durationMs": 412,
+  "summary": { "saved": 1, "cached": 1, "downloaded": 0, "local": 0, "failed": 1, "skipped": 0 },
+  "lockWritten": false,
+  "dependencies": [
+    {
+      "name": "redis",
+      "alias": "cache",
+      "version": "18.1.0",
+      "constraint": "^18.0.0",
+      "repository": "oci://ghcr.io/acme/charts",
+      "status": "cached",
+      "digest": "sha256:…",
+      "sizeBytes": 104857,
+      "durationMs": 3
+    },
+    {
+      "name": "nginx",
+      "version": "9.9.9",
+      "constraint": "9.9.9",
+      "repository": "oci://ghcr.io/acme/charts",
+      "status": "failed",
+      "durationMs": 41,
+      "error": {
+        "code": "not_found",
+        "httpStatus": 404,
+        "message": "404 not found",
+        "hint": "Fix the version, or run 'forge dep update'"
+      }
+    }
+  ],
+  "registries": [
+    { "host": "ghcr.io", "requests": 3, "retries": 0, "authRounds": 1 }
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | `1`. It is raised only for changes that could break a consumer. New fields can be added without raising it |
+| `command` | `dep build` or `dep update` |
+| `chart` | The `CHART` argument as given (default `.`) |
+| `success` | `true` exactly when the exit code is `0` |
+| `durationMs` | Wall time of the run |
+| `summary` | Counts of `dependencies` by status. `saved` = `cached` + `downloaded` + `local`. `charts/` is updated only when `success` is `true` |
+| `lockWritten` | `true` when `Chart.lock` was written (by `dep update`, or by `dep build` without a lock) |
+| `dependencies[]` | One per `Chart.yaml` dependency, in order. Empty when the run stopped before resolving, e.g. `Chart.lock` out of sync |
+| `dependencies[].alias`, `.constraint` | From `Chart.yaml`. `constraint` is the version as written |
+| `dependencies[].version` | The locked version. Missing when resolving failed |
+| `dependencies[].digest`, `.sizeBytes` | The chart archive's digest and size. `file://` dependencies have only `sizeBytes` |
+| `dependencies[].placement` | How the archive got into `charts/`: `reflink`, `hardlink` or `copy`. Present only when `charts/` was updated |
+| `dependencies[].durationMs` | Time spent fetching (or, for `file://`, packaging) this chart (aliases of one chart share it). Missing when no fetch was attempted |
+| `dependencies[].error` | Present when `status` is `failed` |
+| `registries[]` | One per host contacted (OCI registries and chart repositories), sorted by host. `requests` counts every HTTP request, retries included. `retries` counts repeats after 408/429/5xx/network errors. `authRounds` counts `401` challenges. Token servers and blob-redirect hosts appear as hosts of their own. A warm run has none |
+| `error` | Present for failures that no single dependency explains, e.g. a lock out of sync, a timeout, or an unreadable `Chart.yaml` |
+
+`status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `cached` | Served from the cache without any request |
+| `downloaded` | Needed at least one request |
+| `local` | Packaged from a `file://` directory (every run; no cache, no request) |
+| `failed` | See `error` |
+| `skipped` | Not attempted because the run stopped first (another dependency had no matching version or an unsupported repository) |
+
+Every `error` object has a stable `code`, a `message`, and optionally `httpStatus`
+and `hint`. Match on `code`, not on `message`:
+
+| Code | Meaning |
+|---|---|
+| `unauthorized` | `401`: no or expired credentials |
+| `forbidden` | `403`: credentials lack pull access |
+| `not_found` | `404`: the version tag or archive does not exist, or the chart repository index has no such chart/version |
+| `not_a_chart` | The tag is a container image or another artifact |
+| `digest_mismatch` | Downloaded content did not match its digest twice |
+| `no_matching_version` | No tag, index entry or local `file://` chart satisfies the constraint. `hint` lists the nearest versions |
+| `unsupported_repository` | Not an `oci://`, `http(s)://`, `file://` or `@alias` repository |
+| `timeout` | `--timeout` reached, or a request timed out |
+| `lock_out_of_sync` | `Chart.lock` does not match `Chart.yaml` (top-level `error` only) |
+| `interrupted` | SIGINT/SIGTERM (top-level `error` only) |
+| `usage` | Usage error, exit code `2` (see below) |
+| `unknown` | Anything else. Read `message` |
+
+A usage error with `-o json` prints a smaller document:
+
+```json
+{
+  "schemaVersion": 1,
+  "command": "dep build",
+  "success": false,
+  "error": { "code": "usage", "message": "accepts at most 1 arg(s), received 2", "hint": "run 'forge dep build --help'" }
+}
+```
+
+To turn failures into GitHub Actions annotations:
+
+```sh
+forge dep build -o json ./my-chart > forge.json || true
+jq -r '.dependencies[] | select(.status == "failed")
+  | "::error title=forge: \(.name)::\(.error.code): \(.error.message). \(.error.hint // "")"' forge.json
+jq -e .success forge.json > /dev/null
+```
 
 ## What ends up in `charts/`
 

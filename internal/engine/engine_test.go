@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -92,8 +93,15 @@ func TestUpdateResolvesDownloadsAndWritesLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum != (engine.Summary{Charts: 1, Downloaded: 1}) {
+	if sum.Charts != 1 || sum.Downloaded != 1 || sum.Cached != 0 || !sum.LockWritten {
 		t.Fatalf("summary = %+v", sum)
+	}
+	if len(sum.Deps) != 1 {
+		t.Fatalf("deps = %+v", sum.Deps)
+	}
+	if d := sum.Deps[0]; d.Status != engine.StatusDownloaded || d.Version != "1.2.0" || d.Constraint != "^1.0.0" ||
+		d.Digest == "" || d.Size == 0 || d.Placement == "" {
+		t.Fatalf("dep = %+v", d)
 	}
 	if !exists(filepath.Join(o.ChartDir, "charts", "dep-a-1.2.0.tgz")) {
 		t.Fatalf("charts/ = %v", chartsList(t, o.ChartDir))
@@ -118,8 +126,8 @@ func TestUpdateKeepsLockWhenNothingChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(filepath.Join(o.ChartDir, "Chart.lock"))
-	if _, err := engine.Update(ctx, o); err != nil {
-		t.Fatal(err)
+	if sum, err := engine.Update(ctx, o); err != nil || sum.LockWritten {
+		t.Fatalf("lockWritten=%v err=%v", sum.LockWritten, err)
 	}
 	after, _ := os.ReadFile(filepath.Join(o.ChartDir, "Chart.lock"))
 	if !bytes.Equal(before, after) {
@@ -191,7 +199,7 @@ func TestWarmBuildMakesNoRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum != (engine.Summary{Charts: 1, Cached: 1}) || len(fr.Requests()) != 0 {
+	if sum.Charts != 1 || sum.Cached != 1 || sum.Downloaded != 0 || sum.LockWritten || len(fr.Requests()) != 0 {
 		t.Fatalf("summary = %+v, requests = %v", sum, fr.Requests())
 	}
 	if !exists(filepath.Join(o.ChartDir, "charts", "dep-a-1.0.0.tgz")) {
@@ -208,10 +216,17 @@ func TestFailureLeavesChartsUntouched(t *testing.T) {
 	writeChart(t, o.ChartDir,
 		dep{Name: "dep-a", Version: "1.0.0", Repository: fr.Repository()},
 		dep{Name: "dep-missing", Version: "1.0.0", Repository: fr.Repository()})
-	_, err := engine.Update(ctx, o)
+	sum, err := engine.Update(ctx, o)
 	var de *engine.DependencyError
 	if !errors.As(err, &de) || len(de.Failures) != 1 {
 		t.Fatalf("err = %v", err)
+	}
+	if p := de.Failures[0].Problem; p.Code != "not_found" || p.HTTPStatus != 404 {
+		t.Fatalf("problem = %+v", p)
+	}
+	if len(sum.Deps) != 2 || sum.Deps[0].Status != engine.StatusDownloaded || sum.Deps[0].Placement != "" ||
+		sum.Deps[1].Status != engine.StatusFailed || sum.Deps[1].Problem == nil {
+		t.Fatalf("deps = %+v", sum.Deps)
 	}
 	want := "✗ dep-missing 1.0.0 (" + fr.Repository() + "): 404 not found"
 	if !strings.Contains(err.Error(), want) {
@@ -235,15 +250,43 @@ func TestUnsupportedRepositoryFailsBeforeNetwork(t *testing.T) {
 		dep{Name: "bucket", Version: "0.1.0", Repository: "s3://bucket/charts"},
 		dep{Name: "vendored", Version: "1.0.0", Repository: ""})
 	for name, run := range map[string]func(context.Context, engine.Options) (engine.Summary, error){"build": engine.Build, "update": engine.Update} {
-		_, err := run(ctx, o)
+		sum, err := run(ctx, o)
 		if err == nil ||
 			!strings.Contains(err.Error(), `"bucket" (repository "s3://bucket/charts")`) ||
 			!strings.Contains(err.Error(), `"vendored" (no repository`) {
 			t.Fatalf("%s: err = %v", name, err)
 		}
+		var got []engine.Status
+		for _, d := range sum.Deps {
+			got = append(got, d.Status)
+		}
+		if want := []engine.Status{engine.StatusSkipped, engine.StatusFailed, engine.StatusFailed}; !slices.Equal(got, want) {
+			t.Fatalf("%s: statuses = %v, want %v", name, got, want)
+		}
+		if p := sum.Deps[1].Problem; p == nil || p.Code != "unsupported_repository" {
+			t.Fatalf("%s: problem = %+v", name, p)
+		}
 	}
 	if len(fr.Requests()) != 0 || exists(filepath.Join(o.ChartDir, "charts")) {
 		t.Fatalf("requests = %v", fr.Requests())
+	}
+}
+
+func TestNoMatchingVersionReportsEachDependency(t *testing.T) {
+	fr, o := newEngine(t)
+	push(t, fr, "dep-a", "1.0.0")
+	push(t, fr, "dep-b", "1.0.0")
+	writeChart(t, o.ChartDir,
+		dep{Name: "dep-a", Version: "^1.0.0", Repository: fr.Repository(), Alias: "first"},
+		dep{Name: "dep-b", Version: "^3.0.0", Repository: fr.Repository()})
+	sum, err := engine.Update(ctx, o)
+	if err == nil || !strings.Contains(err.Error(), "can't get a valid version for 1 subchart(s)") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(sum.Deps) != 2 || sum.Deps[0].Status != engine.StatusSkipped || sum.Deps[0].Alias != "first" ||
+		sum.Deps[1].Status != engine.StatusFailed || sum.Deps[1].Problem.Code != "no_matching_version" ||
+		sum.Deps[1].Problem.Hint != "available versions: 1.0.0" {
+		t.Fatalf("deps = %+v", sum.Deps)
 	}
 }
 

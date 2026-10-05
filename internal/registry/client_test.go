@@ -153,6 +153,26 @@ func TestCredentialsComeFromHelmRegistryConfig(t *testing.T) {
 	}
 }
 
+func TestStatsMatchWhatTheRegistrySaw(t *testing.T) {
+	fr := fakeregistry.New(t, fakeregistry.WithBearerAuth())
+	fr.AddChart("charts/dep-a", "1.0.0", []byte("x"))
+	c := newClient(t)
+	if _, err := c.ChartManifest(ctx, fr.Host()+"/charts/dep-a", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	total, auth := 0, 0
+	for _, h := range c.Stats() {
+		total += h.Requests
+		auth += h.AuthRounds
+	}
+	if want := len(fr.Requests()) + len(fr.TokenRequests()); total != want {
+		t.Fatalf("Stats total = %d, registry saw %d (%+v)", total, want, c.Stats())
+	}
+	if auth != 1 {
+		t.Fatalf("auth rounds = %d, want 1", auth)
+	}
+}
+
 func TestWithPullScopesFetchesOneTokenForAllRepositories(t *testing.T) {
 	fr := fakeregistry.New(t, fakeregistry.WithBearerAuth())
 	var repos []string

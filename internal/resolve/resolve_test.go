@@ -114,6 +114,10 @@ func TestNoMatchingVersion(t *testing.T) {
 		!strings.Contains(err.Error(), "available versions of dep-a: 1.0.0") {
 		t.Fatalf("err = %v", err)
 	}
+	var nm *resolve.NoMatchError
+	if !errors.As(err, &nm) || len(nm.Missing) != 1 || nm.Missing[0].Constraint != "^2.0.0" || nm.Missing[0].Nearest() != "1.0.0" {
+		t.Fatalf("want *NoMatchError for dep-a, got %#v", err)
+	}
 }
 
 func TestTagListingError(t *testing.T) {

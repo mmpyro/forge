@@ -26,6 +26,7 @@ type depFlags struct {
 	timeout        time.Duration
 	registryConfig string
 	repoConfig     string
+	output         string
 }
 
 func newDepCmd(out io.Writer) *cobra.Command {
@@ -48,7 +49,7 @@ func depSubcommand(out io.Writer, name, short string, run runFunc) *cobra.Comman
 			if len(args) == 1 {
 				dir = args[0]
 			}
-			return runDep(cmd.Context(), out, dir, f, run)
+			return runDep(cmd.Context(), out, "dep "+name, dir, f, run)
 		},
 	}
 	fl := cmd.Flags()
@@ -59,10 +60,14 @@ func depSubcommand(out io.Writer, name, short string, run runFunc) *cobra.Comman
 	fl.DurationVar(&f.timeout, "timeout", 5*time.Minute, "time limit for the whole run")
 	fl.StringVar(&f.registryConfig, "registry-config", registry.DefaultCredentialsFile(), "path to Helm's registry config file")
 	fl.StringVar(&f.repoConfig, "repository-config", repoconfig.DefaultFile(), "path to Helm's repositories.yaml (chart repository names and credentials)")
+	fl.StringVarP(&f.output, "output", "o", outputText, "output format: text or json (json goes to stdout)")
 	return cmd
 }
 
-func runDep(ctx context.Context, out io.Writer, dir string, f depFlags, run runFunc) error {
+func runDep(ctx context.Context, out io.Writer, command, dir string, f depFlags, run runFunc) error {
+	if f.output != outputText && f.output != outputJSON {
+		return usageError{fmt.Errorf("--output must be %q or %q, not %q", outputText, outputJSON, f.output)}
+	}
 	if f.concurrency < 1 || f.perHost < 1 {
 		return usageError{errors.New("--concurrency and --per-host must be at least 1")}
 	}
@@ -104,6 +109,18 @@ func runDep(ctx context.Context, out io.Writer, dir string, f depFlags, run runF
 		Store:      st,
 		Refresh:    f.refresh,
 	})
+	elapsed := time.Since(start)
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		err = fmt.Errorf("timed out after %s: %w", f.timeout, context.DeadlineExceeded)
+	case errors.Is(err, context.Canceled):
+		err = fmt.Errorf("interrupted: %w", context.Canceled)
+	}
+	if f.output == outputJSON {
+		if werr := writeJSON(out, newJSONResult(command, dir, sum, h.Stats(), elapsed, err)); werr != nil && err == nil {
+			return werr
+		}
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("timed out after %s", f.timeout)
@@ -111,12 +128,14 @@ func runDep(ctx context.Context, out io.Writer, dir string, f depFlags, run runF
 		return errors.New("interrupted")
 	case err != nil:
 		return err
+	case f.output == outputJSON:
+		return nil
 	}
 	local := ""
 	if sum.Local > 0 {
 		local = fmt.Sprintf(", %d local", sum.Local)
 	}
 	fmt.Fprintf(out, "Saved %d charts (%d cached, %d downloaded%s) in %s\n",
-		sum.Charts, sum.Cached, sum.Downloaded, local, time.Since(start).Round(time.Millisecond))
+		sum.Charts, sum.Cached, sum.Downloaded, local, elapsed.Round(time.Millisecond))
 	return nil
 }

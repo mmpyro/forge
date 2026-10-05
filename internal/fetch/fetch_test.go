@@ -84,6 +84,9 @@ func TestColdFetchDownloadsEachChartOnce(t *testing.T) {
 		if r.Cached || fileDigest(t, r.BlobPath) != layers[r.Item.Name] {
 			t.Errorf("%s: cached=%v path=%s", r.Item.Name, r.Cached, r.BlobPath)
 		}
+		if fi, _ := os.Stat(r.BlobPath); r.Digest != layers[r.Item.Name] || r.Size != fi.Size() || r.Duration <= 0 {
+			t.Errorf("%s: digest=%s size=%d duration=%s", r.Item.Name, r.Digest, r.Size, r.Duration)
+		}
 	}
 	if m, b := e.reg.Count("/manifests/"), e.reg.Count("/blobs/"); m != 3 || b != 3 {
 		t.Fatalf("manifests=%d blobs=%d, want 3 and 3", m, b)
@@ -100,6 +103,9 @@ func TestWarmFetchMakesNoRequests(t *testing.T) {
 	mustOK(t, results)
 	if !results[0].Cached {
 		t.Fatal("want cached result")
+	}
+	if r := results[0]; r.Digest != fileDigest(t, r.BlobPath) || r.Size == 0 {
+		t.Fatalf("cached result lacks digest/size: %+v", r)
 	}
 	if reqs := e.reg.Requests(); len(reqs) != 0 {
 		t.Fatalf("warm fetch made requests: %v", reqs)

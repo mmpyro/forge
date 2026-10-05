@@ -65,7 +65,7 @@ To build from source, see [Usage → Install](docs/usage.md#install).
 
 | Document | Read it when you want to… |
 |---|---|
-| [Usage](docs/usage.md) | install forge, run it, set flags, cache it in CI, read its errors |
+| [Usage](docs/usage.md) | install forge, run it, set flags, cache it in CI, read its errors, parse its `-o json` output |
 | [Architecture](docs/architecture.md) | understand how a run works and why it is fast and safe |
 | [Development](docs/development.md) | build, test, regenerate goldens, run the compat gate and benchmark |
 

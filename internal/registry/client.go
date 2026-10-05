@@ -50,6 +50,7 @@ type ChartManifest struct {
 type Client struct {
 	auth      *auth.Client
 	plainHTTP bool
+	http      *HTTP
 
 	mu    sync.Mutex
 	repos map[string]*remote.Repository
@@ -79,8 +80,12 @@ func New(o Options) (*Client, error) {
 		Credential: credentials.Credential(store),
 	}
 	ac.SetUserAgent(o.UserAgent)
-	return &Client{auth: ac, plainHTTP: o.PlainHTTP, repos: map[string]*remote.Repository{}}, nil
+	return &Client{auth: ac, plainHTTP: o.PlainHTTP, http: h, repos: map[string]*remote.Repository{}}, nil
 }
+
+// Stats reports the requests sent so far through the client's HTTP, per
+// host (see HTTP.Stats). When HTTP is shared, that includes chart repositories.
+func (c *Client) Stats() []HostStats { return c.http.Stats() }
 
 // RepoRef turns a Chart.yaml repository URL and chart name into an OCI
 // repository reference: ("oci://ghcr.io/acme/charts", "redis") → "ghcr.io/acme/charts/redis".

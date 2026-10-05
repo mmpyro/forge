@@ -128,17 +128,23 @@ func retryable(resp *http.Response, err error) (bool, error) {
 // HTTP builds the HTTP clients of one run: HTTP/2 when the server offers
 // it, retries above the limiter (so a retry waits for a free slot), and a
 // per-request timeout. All its clients share one request budget, so OCI
-// registries and chart repositories together respect the Limits.
+// registries and chart repositories together respect the Limits, and one
+// set of per-host request counts.
 type HTTP struct {
 	lim     *limiter
 	perHost int
 	timeout time.Duration
+	stats   *stats
 	def     *http.Client
 }
 
 // NewHTTP builds the shared clients for one run.
 func NewHTTP(l Limits, timeout time.Duration) *HTTP {
-	h := &HTTP{lim: newLimiter(l), perHost: l.PerHost, timeout: timeout}
+	return newHTTP(l, timeout, newStats())
+}
+
+func newHTTP(l Limits, timeout time.Duration, st *stats) *HTTP {
+	h := &HTTP{lim: newLimiter(l), perHost: l.PerHost, timeout: timeout, stats: st}
 	h.def = h.client(nil)
 	return h
 }
@@ -151,6 +157,11 @@ func (h *HTTP) Client() *http.Client { return h.def }
 // callers keep the result.
 func (h *HTTP) WithTLS(cfg *tls.Config) *http.Client { return h.client(cfg) }
 
+// Stats reports the requests sent so far by every client of h, per host,
+// sorted by host. Token servers and blob redirect targets appear as hosts
+// of their own.
+func (h *HTTP) Stats() []HostStats { return h.stats.snapshot() }
+
 func (h *HTTP) client(cfg *tls.Config) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.ForceAttemptHTTP2 = true
@@ -158,12 +169,14 @@ func (h *HTTP) client(cfg *tls.Config) *http.Client {
 	if cfg != nil {
 		base.TLSClientConfig = cfg
 	}
+	attempts := &countingTransport{base: base, stats: h.stats, attempt: true}
+	retrying := &retry.Transport{Base: &limitTransport{base: attempts, lim: h.lim}, Policy: retryPolicy}
 	return &http.Client{
-		Transport: &retry.Transport{Base: &limitTransport{base: base, lim: h.lim}, Policy: retryPolicy},
+		Transport: &countingTransport{base: retrying, stats: h.stats},
 		Timeout:   h.timeout,
 	}
 }
 
-func newHTTPClient(l Limits, timeout time.Duration) *http.Client {
-	return NewHTTP(l, timeout).Client()
+func newHTTPClient(l Limits, timeout time.Duration, st *stats) *http.Client {
+	return newHTTP(l, timeout, st).Client()
 }

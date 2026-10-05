@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "command": "dep build",
+  "chart": "CHART",
+  "success": false,
+  "durationMs": 0,
+  "summary": {
+    "saved": 0,
+    "cached": 0,
+    "downloaded": 0,
+    "local": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "lockWritten": false,
+  "dependencies": [],
+  "registries": [],
+  "error": {
+    "code": "lock_out_of_sync",
+    "message": "the lock file (Chart.lock) is out of sync with the dependencies file (Chart.yaml). Please update the dependencies",
+    "hint": "run 'forge dep update'"
+  }
+}

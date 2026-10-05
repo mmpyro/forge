@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "command": "dep build",
+  "success": false,
+  "error": {
+    "code": "usage",
+    "message": "accepts at most 1 arg(s), received 2",
+    "hint": "run 'forge dep build --help'"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "command": "dep build",
+  "chart": "CHART",
+  "success": false,
+  "durationMs": 0,
+  "summary": {
+    "saved": 1,
+    "cached": 0,
+    "downloaded": 1,
+    "local": 0,
+    "failed": 1,
+    "skipped": 0
+  },
+  "lockWritten": false,
+  "dependencies": [
+    {
+      "name": "dep-a",
+      "version": "1.0.0",
+      "constraint": "1.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "status": "downloaded",
+      "digest": "sha256:e6811be68d65087ae9076bcb0969e9183029928beaecd35e9da2a82e24187f7b",
+      "sizeBytes": 135,
+      "durationMs": 0
+    },
+    {
+      "name": "dep-missing",
+      "version": "1.0.0",
+      "constraint": "1.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "status": "failed",
+      "durationMs": 0,
+      "error": {
+        "code": "not_found",
+        "httpStatus": 404,
+        "message": "404 not found",
+        "hint": "Fix the version, or run 'forge dep update'"
+      }
+    }
+  ],
+  "registries": [
+    {
+      "host": "REGISTRY",
+      "requests": 3,
+      "retries": 0,
+      "authRounds": 0
+    }
+  ]
+}

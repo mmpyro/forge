@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"golang.org/x/sync/singleflight"
 
@@ -48,6 +49,9 @@ type Result struct {
 	BlobPath string
 	FileName string // archive name in charts/
 	Cached   bool   // served from the cache without any request
+	Digest   digest.Digest
+	Size     int64
+	Duration time.Duration // time spent on this chart; aliases share it
 	Err      error
 }
 
@@ -100,21 +104,22 @@ func (f *Fetcher) Fetch(ctx context.Context, items []Item) []Result {
 		jobs[id] = j
 		order = append(order, j)
 	}
-	set := func(j *job, path, file string, cached bool, err error) {
+	set := func(j *job, r Result) {
+		if r.Err == nil && r.FileName == "" {
+			r.FileName = j.name + "-" + j.version + ".tgz"
+		}
 		for _, i := range j.idx {
-			r := &results[i]
-			r.BlobPath, r.FileName, r.Cached, r.Err = path, file, cached, err
-			if r.FileName == "" && err == nil {
-				r.FileName = r.Item.FileName()
-			}
+			r.Item = results[i].Item
+			results[i] = r
 		}
 	}
 
 	var misses []*job
 	for _, j := range order {
 		if !f.Refresh {
+			start := time.Now()
 			if ref, ok := f.Store.GetRef(j.key, j.version); ok && f.Store.HasBlob(ref.Layer) && (j.oci || ref.File != "") {
-				set(j, f.Store.BlobPath(ref.Layer), ref.File, true, nil)
+				set(j, Result{BlobPath: f.Store.BlobPath(ref.Layer), FileName: ref.File, Cached: true, Digest: ref.Layer, Size: ref.Size, Duration: time.Since(start)})
 				continue
 			}
 		}
@@ -132,14 +137,15 @@ func (f *Fetcher) Fetch(ctx context.Context, items []Item) []Result {
 	}
 	ctx = registry.WithPullScopes(ctx, repos)
 	par.ByHost(ctx, misses, (*job).host, func(ctx context.Context, j *job) {
-		var path, file string
-		var err error
+		start := time.Now()
+		var r Result
 		if j.oci {
-			path, err = f.fetchOCI(ctx, j.key, j.version)
+			r = f.fetchOCI(ctx, j.key, j.version)
 		} else {
-			path, file, err = f.fetchRepo(ctx, j)
+			r = f.fetchRepo(ctx, j)
 		}
-		set(j, path, file, false, err) // each job owns distinct indices
+		r.Duration = time.Since(start)
+		set(j, r) // each job owns distinct indices
 	})
 	return results
 }
@@ -158,32 +164,32 @@ func newJob(it Item) (*job, error) {
 	return &job{key: chartrepo.CacheKey(it.Repository, it.Name), repoURL: it.Repository, name: it.Name, version: it.Version}, nil
 }
 
-func (f *Fetcher) fetchOCI(ctx context.Context, repo, version string) (string, error) {
+func (f *Fetcher) fetchOCI(ctx context.Context, repo, version string) Result {
 	cm, err := f.Registry.ChartManifest(ctx, repo, version)
 	if err != nil {
-		return "", err
+		return Result{Err: err}
 	}
 	path, err := f.blob(ctx, repo, cm.Layer)
 	if err != nil {
-		return "", err
+		return Result{Err: err}
 	}
 	ref := store.Ref{Manifest: cm.Manifest, Layer: cm.Layer.Digest, Size: cm.Layer.Size, FetchedAt: time.Now().UTC()}
 	if err := f.Store.PutRef(repo, version, ref); err != nil {
-		return "", fmt.Errorf("write cache entry: %w", err)
+		return Result{Err: fmt.Errorf("write cache entry: %w", err)}
 	}
-	return path, nil
+	return Result{BlobPath: path, Digest: cm.Layer.Digest, Size: cm.Layer.Size}
 }
 
 // fetchRepo downloads a chart repository archive. The index gives no
 // trustworthy digest up front, so the archive is hashed as it is stored.
-func (f *Fetcher) fetchRepo(ctx context.Context, j *job) (string, string, error) {
+func (f *Fetcher) fetchRepo(ctx context.Context, j *job) Result {
 	chartURL, err := f.Repos.ChartURL(ctx, j.repoURL, j.name, j.version)
 	if err != nil {
-		return "", "", err
+		return Result{Err: err}
 	}
 	file, err := archiveName(chartURL)
 	if err != nil {
-		return "", "", err
+		return Result{Err: err}
 	}
 	v, err, _ := f.flight.Do("url:"+chartURL, func() (any, error) {
 		rc, err := f.Repos.Open(ctx, j.repoURL, chartURL)
@@ -198,13 +204,13 @@ func (f *Fetcher) fetchRepo(ctx context.Context, j *job) (string, string, error)
 		return store.Ref{Layer: d, Size: n, File: file, FetchedAt: time.Now().UTC()}, nil
 	})
 	if err != nil {
-		return "", "", err
+		return Result{Err: err}
 	}
 	ref := v.(store.Ref)
 	if err := f.Store.PutRef(j.key, j.version, ref); err != nil {
-		return "", "", fmt.Errorf("write cache entry: %w", err)
+		return Result{Err: fmt.Errorf("write cache entry: %w", err)}
 	}
-	return f.Store.BlobPath(ref.Layer), file, nil
+	return Result{BlobPath: f.Store.BlobPath(ref.Layer), FileName: file, Digest: ref.Layer, Size: ref.Size}
 }
 
 // archiveName is the file name Helm saves chartURL under: its last path

@@ -56,8 +56,11 @@ func TestRepoUpdateResolvesRangeThenWarmBuildIsOffline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum != (engine.Summary{Charts: 1, Downloaded: 1}) {
+	if sum.Charts != 1 || sum.Downloaded != 1 || sum.Cached != 0 || sum.Local != 0 {
 		t.Fatalf("summary = %+v", sum)
+	}
+	if d := sum.Deps[0]; d.Status != engine.StatusDownloaded || d.Version != "1.2.0" || d.Digest == "" || d.Size == 0 || d.Placement == "" {
+		t.Fatalf("dep = %+v", d)
 	}
 	if want := []string{"GET /charts/index.yaml", "GET /charts/dep-a-1.2.0.tgz"}; !slices.Equal(r.Requests(), want) {
 		t.Fatalf("requests = %v, want %v", r.Requests(), want)
@@ -277,8 +280,11 @@ func TestFileDependencyIsPackagedLikeHelm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum != (engine.Summary{Charts: 1, Local: 1}) {
+	if sum.Charts != 1 || sum.Local != 1 || sum.Cached != 0 || sum.Downloaded != 0 {
 		t.Fatalf("summary = %+v", sum)
+	}
+	if d := sum.Deps[0]; d.Status != engine.StatusLocal || d.Version != "0.3.0" || d.Size == 0 || d.Placement == "" {
+		t.Fatalf("dep = %+v", d)
 	}
 	c, _ := chartmeta.Load(o.ChartDir)
 	if l := c.Lock.Dependencies[0]; l.Version != "0.3.0" || l.Repository != "file://local-dep" {
@@ -341,8 +347,15 @@ func TestMixedSourcesInOneChart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum != (engine.Summary{Charts: 3, Downloaded: 2, Local: 1}) {
+	if sum.Charts != 3 || sum.Downloaded != 2 || sum.Local != 1 || sum.Cached != 0 {
 		t.Fatalf("summary = %+v", sum)
+	}
+	var statuses []engine.Status
+	for _, d := range sum.Deps {
+		statuses = append(statuses, d.Status)
+	}
+	if want := []engine.Status{engine.StatusDownloaded, engine.StatusDownloaded, engine.StatusLocal}; !slices.Equal(statuses, want) {
+		t.Fatalf("statuses = %v, want %v", statuses, want)
 	}
 	want := []string{"dep-a-1.0.0.tgz", "dep-b-0.2.0.tgz", "local-dep-1.0.0.tgz"}
 	if got := chartsList(t, o.ChartDir); !slices.Equal(got, want) {

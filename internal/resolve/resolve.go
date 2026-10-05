@@ -68,7 +68,7 @@ func Resolve(ctx context.Context, s Sources, deps []*chart.Dependency) ([]*chart
 	lookups := make([]*list, len(deps)) // nil: no lookup needed
 	locked := make([]*chart.Dependency, len(deps))
 	var lists []list
-	var missing, hints []string
+	var missing []Missing
 	for i, d := range deps {
 		c, err := semver.NewConstraint(d.Version)
 		if err != nil {
@@ -89,8 +89,8 @@ func Resolve(ctx context.Context, s Sources, deps []*chart.Dependency) ([]*chart
 				return nil, fmt.Errorf("dependency %q: local chart has an invalid version %q: %w", d.Name, ch.Metadata.Version, err)
 			}
 			if !c.Check(v) {
-				missing = append(missing, fmt.Sprintf("%q (repository %q, version %q)", d.Name, d.Repository, d.Version))
-				hints = append(hints, fmt.Sprintf("local version of %s: %s", d.Name, ch.Metadata.Version))
+				missing = append(missing, Missing{Index: i, Name: d.Name, Repository: d.Repository, Constraint: d.Version,
+					Available: []string{ch.Metadata.Version}, Local: true})
 				continue
 			}
 			locked[i].Version = ch.Metadata.Version
@@ -132,16 +132,57 @@ func Resolve(ctx context.Context, s Sources, deps []*chart.Dependency) ([]*chart
 			}
 		}
 		if !found {
-			missing = append(missing, fmt.Sprintf("%q (repository %q, version %q)", d.Name, d.Repository, d.Version))
-			hints = append(hints, fmt.Sprintf("available versions of %s: %s", d.Name, nearest(vs)))
+			missing = append(missing, Missing{Index: i, Name: d.Name, Repository: d.Repository, Constraint: d.Version, Available: vs})
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("can't get a valid version for %d subchart(s): %s. Make sure a matching chart version exists in the repo, or change the version constraint in Chart.yaml\n  %s",
-			len(missing), strings.Join(missing, ", "), strings.Join(hints, "\n  "))
+		return nil, &NoMatchError{Missing: missing}
 	}
 	return locked, nil
 }
+
+// Missing is a dependency whose constraint no available version satisfies.
+type Missing struct {
+	Index      int // position in the deps passed to Resolve
+	Name       string
+	Repository string
+	Constraint string
+	Available  []string // highest first; for file://, the local chart's version
+	Local      bool     // file:// dependency
+}
+
+// Nearest lists up to five of the highest available versions, or "none".
+func (m Missing) Nearest() string { return nearest(m.Available) }
+
+// NoMatchError lists every dependency without a matching version.
+type NoMatchError struct{ Missing []Missing }
+
+func (e *NoMatchError) Error() string {
+	names := make([]string, len(e.Missing))
+	hints := make([]string, len(e.Missing))
+	for i, m := range e.Missing {
+		names[i] = fmt.Sprintf("%q (repository %q, version %q)", m.Name, m.Repository, m.Constraint)
+		if m.Local {
+			hints[i] = fmt.Sprintf("local version of %s: %s", m.Name, m.Nearest())
+		} else {
+			hints[i] = fmt.Sprintf("available versions of %s: %s", m.Name, m.Nearest())
+		}
+	}
+	return fmt.Sprintf("can't get a valid version for %d subchart(s): %s. Make sure a matching chart version exists in the repo, or change the version constraint in Chart.yaml\n  %s",
+		len(e.Missing), strings.Join(names, ", "), strings.Join(hints, "\n  "))
+}
+
+// TagsError is a failure to list a repository's tags.
+type TagsError struct {
+	Repo string
+	Err  error
+}
+
+func (e *TagsError) Error() string {
+	return fmt.Sprintf("could not retrieve list of tags for repository %s: %v", e.Repo, e.Err)
+}
+
+func (e *TagsError) Unwrap() error { return e.Err }
 
 func listAll(ctx context.Context, s Sources, lists []list) (map[list][]string, error) {
 	var (
@@ -164,7 +205,7 @@ func listAll(ctx context.Context, s Sources, lists []list) (map[list][]string, e
 		if l.oci != "" {
 			vs, err = s.Tags.Tags(ctx, l.oci)
 			if err != nil {
-				err = fmt.Errorf("could not retrieve list of tags for repository %s: %w", l.oci, err)
+				err = &TagsError{Repo: l.oci, Err: err}
 			}
 		} else {
 			vs, err = s.Index.Versions(ctx, l.repoURL, l.name)
