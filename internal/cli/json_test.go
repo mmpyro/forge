@@ -4,8 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
+	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,12 +22,13 @@ import (
 var update = flag.Bool("update", false, "rewrite testdata/json goldens")
 
 // stableChart is a minimal chart archive with fixed timestamps, so its
-// digest and size are the same on every run.
+// digest and size are the same on every run. The gzip stream is built by hand
+// as one stored deflate block: compress/gzip output (even at NoCompression)
+// changes between Go versions, which would break the goldens.
 func stableChart(t *testing.T, name, version string) []byte {
 	t.Helper()
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(zw)
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
 	body := []byte("apiVersion: v2\nname: " + name + "\nversion: " + version + "\n")
 	hdr := &tar.Header{Name: name + "/Chart.yaml", Mode: 0o644, Size: int64(len(body)), ModTime: time.Unix(0, 0)}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -34,10 +38,28 @@ func stableChart(t *testing.T, name, version string) []byte {
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := zw.Close(); err != nil {
-		t.Fatal(err)
+	data := tarBuf.Bytes()
+	if len(data) > 0xffff {
+		t.Fatalf("chart tar is %d bytes, too big for one stored block", len(data))
 	}
-	return buf.Bytes()
+
+	// RFC 1952 header: magic, deflate, no flags, mtime 0, no extra flags, OS unknown.
+	out := []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff}
+	// RFC 1951 stored block: BFINAL=1 BTYPE=00, LEN, NLEN, data.
+	n := uint16(len(data))
+	out = append(out, 1)
+	out = binary.LittleEndian.AppendUint16(out, n)
+	out = binary.LittleEndian.AppendUint16(out, ^n)
+	out = append(out, data...)
+	out = binary.LittleEndian.AppendUint32(out, crc32.ChecksumIEEE(data))
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(data)))
+
+	if zr, err := gzip.NewReader(bytes.NewReader(out)); err != nil {
+		t.Fatal(err)
+	} else if got, err := io.ReadAll(zr); err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("hand-built gzip does not round-trip: %v", err)
+	}
+	return out
 }
 
 // jsonEnv is a chart backed by a fake registry.

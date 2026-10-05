@@ -20,8 +20,8 @@
       "constraint": "1.0.0",
       "repository": "oci://REGISTRY/charts",
       "status": "downloaded",
-      "digest": "sha256:e6811be68d65087ae9076bcb0969e9183029928beaecd35e9da2a82e24187f7b",
-      "sizeBytes": 135,
+      "digest": "sha256:bf3523ffdc9a1c2e2bb1dfb2f12054433d2d4f1e0e0a8e29512d21c1c9ba0c83",
+      "sizeBytes": 2071,
       "durationMs": 0
     },
     {
