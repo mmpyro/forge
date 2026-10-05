@@ -41,7 +41,7 @@ func dep(name, version string) *chart.Dependency {
 
 func resolveOne(t *testing.T, f *fakeTags, d *chart.Dependency) string {
 	t.Helper()
-	got, err := resolve.Resolve(context.Background(), f, []*chart.Dependency{d})
+	got, err := resolve.Resolve(context.Background(), resolve.Sources{Tags: f}, []*chart.Dependency{d})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestSameRepositoryListedOnce(t *testing.T) {
 	f := newFake(map[string][]string{"r.example/charts/dep-a": {"1.2.0"}})
 	a, b := dep("dep-a", "^1.0.0"), dep("dep-a", "~1.2.0")
 	a.Alias, b.Alias = "first", "second"
-	got, err := resolve.Resolve(context.Background(), f, []*chart.Dependency{a, b})
+	got, err := resolve.Resolve(context.Background(), resolve.Sources{Tags: f}, []*chart.Dependency{a, b})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestSameRepositoryListedOnce(t *testing.T) {
 }
 
 func TestInvalidConstraint(t *testing.T) {
-	_, err := resolve.Resolve(context.Background(), newFake(nil), []*chart.Dependency{dep("dep-a", "not a version")})
+	_, err := resolve.Resolve(context.Background(), resolve.Sources{Tags: newFake(nil)}, []*chart.Dependency{dep("dep-a", "not a version")})
 	if err == nil || !strings.Contains(err.Error(), `dependency "dep-a" has an invalid version/constraint format`) {
 		t.Fatalf("err = %v", err)
 	}
@@ -108,7 +108,7 @@ func TestInvalidConstraint(t *testing.T) {
 
 func TestNoMatchingVersion(t *testing.T) {
 	f := newFake(map[string][]string{"r.example/charts/dep-a": {"1.0.0"}})
-	_, err := resolve.Resolve(context.Background(), f, []*chart.Dependency{dep("dep-a", "^2.0.0")})
+	_, err := resolve.Resolve(context.Background(), resolve.Sources{Tags: f}, []*chart.Dependency{dep("dep-a", "^2.0.0")})
 	if err == nil ||
 		!strings.Contains(err.Error(), "can't get a valid version for 1 subchart(s)") ||
 		!strings.Contains(err.Error(), "available versions of dep-a: 1.0.0") {
@@ -119,7 +119,7 @@ func TestNoMatchingVersion(t *testing.T) {
 func TestTagListingError(t *testing.T) {
 	f := newFake(nil)
 	f.err = errors.New("boom")
-	_, err := resolve.Resolve(context.Background(), f, []*chart.Dependency{dep("dep-a", "^1.0.0")})
+	_, err := resolve.Resolve(context.Background(), resolve.Sources{Tags: f}, []*chart.Dependency{dep("dep-a", "^1.0.0")})
 	if err == nil || !strings.Contains(err.Error(), "could not retrieve list of tags for repository r.example/charts/dep-a") {
 		t.Fatalf("err = %v", err)
 	}

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: http-mixed
+version: 0.1.0
+# Helm keys repositories by chart name, so one chart name must not come from
+# both an OCI registry and a chart repository.
+dependencies:
+  - name: dep-c
+    version: 1.0.0+build.1
+    repository: oci://localhost:5001/charts
+  - name: dep-a
+    version: ~2.0.0
+    repository: http://localhost:5002
+    alias: from-http
+  - name: dep-a
+    version: 1.1.0
+    repository: http://localhost:5002
+  - name: dep-b
+    version: 0.1.0
+    repository: http://localhost:5002

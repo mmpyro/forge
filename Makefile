@@ -14,7 +14,7 @@ registry-up:
 		docker run -d --rm -p 5001:5000 --name forge-registry registry:2 >/dev/null
 
 registry-down:
-	-docker stop forge-registry
+	-docker stop forge-registry forge-chartrepo
 
 fixtures: registry-up
 	scripts/fixtures.sh

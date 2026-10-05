@@ -1,0 +1,10 @@
+apiVersion: v2
+name: http-ranges
+version: 0.1.0
+dependencies:
+  - name: dep-a
+    version: ^1.0.0
+    repository: http://localhost:5002
+  - name: dep-b
+    version: ">=0.1.0 <1.0.0"
+    repository: http://localhost:5002/

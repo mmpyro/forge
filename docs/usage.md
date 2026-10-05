@@ -132,10 +132,11 @@ Deletes the cache directory.
 |---|---|---|
 | `--concurrency` | `16` | Max requests in flight in total |
 | `--per-host` | `8` | Max requests in flight per host |
-| `--refresh` | `false` | Re-check tags with the registry instead of trusting the cached tag→digest mapping |
-| `--plain-http` | `false` | Use plain HTTP (e.g. a local `registry:2`) |
+| `--refresh` | `false` | Re-check versions with registries and repositories instead of trusting the cached version→digest mapping |
+| `--plain-http` | `false` | Use plain HTTP for OCI registries (e.g. a local `registry:2`). Chart repositories use the scheme in their URL |
 | `--timeout` | `5m` | Time limit for the whole run |
 | `--registry-config` | Helm's path | Helm's registry credentials file |
+| `--repository-config` | Helm's path | Helm's `repositories.yaml` (`@name` repositories, credentials, TLS) |
 
 Per-request timeout is 60 s; failed requests are retried (see
 [Errors and retries](#errors-and-retries)).
@@ -146,18 +147,36 @@ Per-request timeout is 60 s; failed requests are retried (see
 |---|---|
 | `HELM_FORGE_CACHE` | Cache root. Default `~/.cache/helm-forge`, or `$HELM_CACHE_HOME/forge` when run as `helm forge` |
 | `HELM_REGISTRY_CONFIG` | Credentials file, same as Helm. Default: Helm's `registry/config.json` |
+| `HELM_REPOSITORY_CONFIG` | Chart repositories file, same as Helm. Default: Helm's `repositories.yaml` |
 | `HELM_FORGE_PLUGIN_URL` | Plugin install hook only: base URL for release downloads (mirror) |
 
 ## Authentication
 
-forge reads credentials only from Helm's registry config. Log in the usual way:
+forge reads credentials only from Helm's own files, so log in the usual way.
+
+OCI registries use Helm's registry config:
 
 ```sh
 helm registry login ghcr.io
 forge dep build ./my-chart
 ```
 
-A missing credentials file means anonymous access.
+Chart repositories use `repositories.yaml`. Its username/password, CA file,
+client certificate and `insecure_skip_tls_verify` apply to any dependency whose
+URL matches the repository, and to `@name` references:
+
+```sh
+helm repo add acme https://charts.acme.example --username me --password-stdin
+forge dep build ./my-chart
+```
+
+As in Helm, credentials go only to the repository's own scheme and host. If
+`index.yaml` points archives at another host, add `--pass-credentials` to
+`helm repo add` to send them there too.
+
+Unlike `helm dependency build`, forge does not require `helm repo add` for a
+chart repository URL; without an entry, access is anonymous. A missing file
+means anonymous access everywhere.
 
 ## Output
 
@@ -168,12 +187,18 @@ Saved 12 charts (9 cached, 3 downloaded) in 412ms
 ```
 
 Aliases of one chart count separately in `Saved`, but the archive is
-downloaded only once.
+downloaded only once. Charts packaged from `file://` directories add
+`, N local` to the counts.
 
 ## What ends up in `charts/`
 
 - One `<name>-<version>.tgz` per dependency — byte-identical to what Helm
-  downloads.
+  downloads. Chart repository archives keep the file name of their URL in
+  `index.yaml`, as in Helm.
+- `file://` dependencies are packaged from their directory on every run, with
+  Helm's own packaging code (no cache, no network); the archive's contents
+  match Helm's. `dep build` fails if the
+  directory's chart version no longer matches `Chart.lock`.
 - Stale chart archives (no longer a dependency) are removed, as
   `helm dep build` does. Non-chart files and unpacked subchart directories are
   kept.
@@ -211,7 +236,13 @@ Error: 2 dependencies failed:
 | `… is not a Helm chart (layer media types: …)` | The tag is a container image or other artifact | Point the dependency at a chart |
 | `downloaded content did not match its digest twice` | Corruption or a proxy rewriting responses | Check proxies; retry |
 | `can't get a valid version for N subchart(s)` | No tag satisfies the range | forge lists up to 5 available versions; adjust the constraint |
-| `forge supports only oci:// dependencies` | A non-OCI repository in `Chart.yaml` | Use `helm dependency build` for that chart |
+| `401 unauthorized; add credentials with 'helm repo add …'` | Chart repository needs credentials | `helm repo add <name> <url> --username …` |
+| `404 not found: <url>` | Archive listed in `index.yaml` is missing | Fix the repository, or `forge dep update` |
+| `<chart> chart not found in repo <url>` | `index.yaml` has no such chart | Fix the name or repository |
+| `no repository definition for @name` | `@name` / `alias:name` not in `repositories.yaml` | `helm repo add name <url>` |
+| `directory … not found` | `file://` path does not exist (relative to the chart) | Fix the path |
+| `can't get a valid version for dependency <name>` | `file://` chart's version changed since `Chart.lock` | `forge dep update` |
+| `forge supports oci://, http(s)://, file:// and @alias repositories` | No `repository`, or another scheme | Use `helm dependency build` for that chart |
 | `timed out after 5m0s` | `--timeout` reached | Raise `--timeout` or check the network |
 
 ## Caching in CI

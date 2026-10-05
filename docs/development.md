@@ -57,15 +57,20 @@ HELM_FORGE_CACHE=$(mktemp -d) bin/forge dep build --plain-http ./chart
 
 No network. Registry behaviour comes from `internal/testutil/fakeregistry`,
 an in-memory OCI registry that records every request and can inject faults
-(429, 5xx, digest mismatch, …). `internal/testutil.WriteChartTgz` builds a
+(429, 5xx, digest mismatch, …). Chart repositories come from
+`internal/testutil/fakerepo`: an `index.yaml` plus archives, with a request
+log (marking requests that carried credentials), basic auth and queued error
+statuses. `internal/testutil.WriteChartTgz` builds a
 real chart archive for store/materialize tests.
 
 ### Integration tests — `test/integration/`
 
-Build tag `integration`. They run forge against the local registry through a
-counting reverse proxy and assert:
+Build tag `integration`. They run forge against the local registry
+(`localhost:5001`) and chart repository (`localhost:5002`) through counting
+reverse proxies, with no `repositories.yaml`, and assert:
 
-- cold `dep build` makes at most `2 × unique charts + 1` requests;
+- cold `dep build` makes at most `2 × unique OCI charts + 1 × unique
+  chart-repository charts + 1 per source` requests;
 - warm `dep build` makes **zero** requests;
 - `charts/` has one entry per unique chart.
 
@@ -78,9 +83,16 @@ For every fixture × {`update`, `build`} × {Helm 4, Helm 3}, runs Helm and forg
 on separate copies and diffs:
 
 - `charts/` listing
-- sha256 of every archive
+- sha256 of every downloaded archive; for archives packaged from `file://`
+  directories, a hash of member names and contents (gzip bytes depend on the
+  Go version each binary was built with, and Helm 3 stamps tar entries with
+  the current time)
 - `Chart.lock` without `generated:`
 - `helm template` output
+
+Fixtures using the chart repository get `helm repo add fixtures …` in Helm's
+isolated config first, because `helm dependency build` refuses unregistered
+repositories; forge runs with an empty config.
 
 Override binaries with `FORGE=…` and `HELMS="helm /path/to/helm3"`.
 
@@ -101,15 +113,18 @@ Targets (the script fails if missed):
 
 | Path | Contents |
 |---|---|
-| `testdata/src/` | Dependency charts pushed by `scripts/fixtures.sh`: `dep-a` (1.0.0, 1.1.0, 1.2.0, 2.0.0), `dep-b` (0.1.0, 0.2.0-rc.1), `dep-c` (1.0.0+build.1), plus 40 generated `bench-NN` |
-| `testdata/charts/<fixture>/` | Parent charts, one feature each: `alias`, `build-metadata`, `condition-tags`, `exact`, `nodeps`, `prerelease`, `ranges`, `stale` |
+| `testdata/src/` | Dependency charts pushed by `scripts/fixtures.sh`: `dep-a` (1.0.0, 1.1.0, 1.2.0, 2.0.0), `dep-b` (0.1.0, 0.2.0-rc.1), `dep-c` (1.0.0+build.1), plus 40 generated `bench-NN`. `dep-a` and `dep-b` are also served from a chart repository (`.chartrepo/`, nginx on `localhost:5002`) |
+| `testdata/charts/<fixture>/` | Parent charts, one feature each: `alias`, `build-metadata`, `condition-tags`, `exact`, `file-local` (chart in `local-dep/`), `http-mixed`, `http-ranges`, `nodeps`, `prerelease`, `ranges`, `stale` |
 | `testdata/seeds/<fixture>/` | Pre-existing `charts/` contents copied in before a run (e.g. `stale`) |
 | `testdata/golden/<fixture>/` | Helm-generated `Chart.yaml` + `Chart.lock` |
 
 ### Adding a fixture
 
 1. Create `testdata/charts/<name>/Chart.yaml` pointing at
-   `oci://localhost:5001/charts`.
+   `oci://localhost:5001/charts` or `http://localhost:5002`. A `file://`
+   dependency must live inside the fixture directory (not in `charts/`),
+   because the scripts copy one fixture directory at a time. Helm cannot take
+   one chart name from both an OCI registry and a chart repository.
 2. If it needs new dependency versions, add them to `scripts/fixtures.sh`.
 3. If it needs pre-existing `charts/` content, put it in `testdata/seeds/<name>/`.
 4. Run `make golden` — real Helm writes `testdata/golden/<name>/`.
@@ -169,7 +184,8 @@ links in `README.md` and the plugin install hooks
 - `charts/` changes only if every dependency succeeded.
 - Staging lives at `<chart>/.forge-staging/`, never inside `charts/`.
 - Store writes: `tmp/` then rename. No locks.
-- Non-`oci://` dependencies fail before any network call.
+- Unsupported repositories (none, other schemes, unknown `@name`, missing
+  `file://` directory) fail before any network call.
 - Exit codes: `0` ok, `1` failure (`engine.DependencyError` lists each), `2`
   usage (`cli.usageError`).
-- Credentials only from Helm's registry config.
+- Credentials only from Helm's registry config and `repositories.yaml`.

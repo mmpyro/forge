@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mmarszalek/helm-forge/internal/chartmeta"
+	"github.com/mmarszalek/helm-forge/internal/chartrepo"
 	"github.com/mmarszalek/helm-forge/internal/engine"
 	"github.com/mmarszalek/helm-forge/internal/registry"
 	"github.com/mmarszalek/helm-forge/internal/store"
@@ -58,7 +59,12 @@ func newEngine(t *testing.T) (*fakeregistry.Registry, engine.Options) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fr, engine.Options{ChartDir: t.TempDir(), Registry: client, Store: st}
+	return fr, engine.Options{
+		ChartDir: t.TempDir(),
+		Registry: client,
+		Repos:    chartrepo.New(registry.NewHTTP(registry.Limits{Global: 16, PerHost: 8}, 10*time.Second), nil, "forge-test"),
+		Store:    st,
+	}
 }
 
 func push(t *testing.T, fr *fakeregistry.Registry, name string, versions ...string) {
@@ -226,13 +232,13 @@ func TestUnsupportedRepositoryFailsBeforeNetwork(t *testing.T) {
 	fr, o := newEngine(t)
 	writeChart(t, o.ChartDir,
 		dep{Name: "dep-a", Version: "1.0.0", Repository: fr.Repository()},
-		dep{Name: "local", Version: "0.1.0", Repository: "file://../local"},
-		dep{Name: "classic", Version: "1.0.0", Repository: "https://charts.example.com"})
+		dep{Name: "bucket", Version: "0.1.0", Repository: "s3://bucket/charts"},
+		dep{Name: "vendored", Version: "1.0.0", Repository: ""})
 	for name, run := range map[string]func(context.Context, engine.Options) (engine.Summary, error){"build": engine.Build, "update": engine.Update} {
 		_, err := run(ctx, o)
 		if err == nil ||
-			!strings.Contains(err.Error(), `"local" (repository "file://../local")`) ||
-			!strings.Contains(err.Error(), `"classic" (repository "https://charts.example.com")`) {
+			!strings.Contains(err.Error(), `"bucket" (repository "s3://bucket/charts")`) ||
+			!strings.Contains(err.Error(), `"vendored" (no repository`) {
 			t.Fatalf("%s: err = %v", name, err)
 		}
 	}
