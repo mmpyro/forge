@@ -23,6 +23,7 @@ type depFlags struct {
 	perHost        int
 	refresh        bool
 	plainHTTP      bool
+	verbose        bool
 	timeout        time.Duration
 	registryConfig string
 	repoConfig     string
@@ -57,6 +58,7 @@ func depSubcommand(out io.Writer, name, short string, run runFunc) *cobra.Comman
 	fl.IntVar(&f.perHost, "per-host", 8, "maximum requests in flight per host")
 	fl.BoolVar(&f.refresh, "refresh", false, "re-check versions with registries and repositories instead of trusting the cache")
 	fl.BoolVar(&f.plainHTTP, "plain-http", false, "use insecure HTTP connections to OCI registries")
+	fl.BoolVarP(&f.verbose, "verbose", "v", false, "print per-dependency status (cached, downloaded, local, failed)")
 	fl.DurationVar(&f.timeout, "timeout", 5*time.Minute, "time limit for the whole run")
 	fl.StringVar(&f.registryConfig, "registry-config", registry.DefaultCredentialsFile(), "path to Helm's registry config file")
 	fl.StringVar(&f.repoConfig, "repository-config", repoconfig.DefaultFile(), "path to Helm's repositories.yaml (chart repository names and credentials)")
@@ -131,6 +133,14 @@ func runDep(ctx context.Context, out io.Writer, command, dir string, f depFlags,
 	case f.output == outputJSON:
 		return nil
 	}
+	if f.verbose {
+		for _, d := range sum.Deps {
+			label := depLabel(d)
+			icon := statusIcon(d.Status)
+			fmt.Fprintf(out, "  %s %s %s@%s (%s) [%s]\n",
+				icon, string(d.Status), label, d.Version, d.Repository, d.Duration.Round(time.Millisecond))
+		}
+	}
 	local := ""
 	if sum.Local > 0 {
 		local = fmt.Sprintf(", %d local", sum.Local)
@@ -138,4 +148,31 @@ func runDep(ctx context.Context, out io.Writer, command, dir string, f depFlags,
 	fmt.Fprintf(out, "Saved %d charts (%d cached, %d downloaded%s) in %s\n",
 		sum.Charts, sum.Cached, sum.Downloaded, local, elapsed.Round(time.Millisecond))
 	return nil
+}
+
+// depLabel returns a display name for a dependency, showing alias→name when
+// an alias is set.
+func depLabel(d engine.Dep) string {
+	if d.Alias != "" && d.Alias != d.Name {
+		return d.Alias + "→" + d.Name
+	}
+	return d.Name
+}
+
+// statusIcon returns a short emoji prefix for each status.
+func statusIcon(s engine.Status) string {
+	switch s {
+	case engine.StatusCached:
+		return "📦"
+	case engine.StatusDownloaded:
+		return "⬇️"
+	case engine.StatusLocal:
+		return "📁"
+	case engine.StatusFailed:
+		return "❌"
+	case engine.StatusSkipped:
+		return "⏭️"
+	default:
+		return "•"
+	}
 }
