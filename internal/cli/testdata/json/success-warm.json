@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "command": "dep build",
+  "chart": "CHART",
+  "success": true,
+  "durationMs": 0,
+  "summary": {
+    "saved": 2,
+    "cached": 2,
+    "downloaded": 0,
+    "local": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "lockWritten": false,
+  "dependencies": [
+    {
+      "name": "dep-a",
+      "alias": "cache",
+      "version": "1.1.0",
+      "constraint": "^1.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "status": "cached",
+      "digest": "sha256:a0a303ddde7b863804e6d66d99209246fba2c7813a3c761c7eaa60b52acfa79b",
+      "sizeBytes": 2071,
+      "placement": "PLACEMENT",
+      "durationMs": 0
+    },
+    {
+      "name": "dep-b",
+      "version": "2.0.0",
+      "constraint": "2.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "status": "cached",
+      "digest": "sha256:a4c5dc75bdcb2421095c5c8dd9cdf2fbec75e9f2625ac14d741f79cd7a5317d3",
+      "sizeBytes": 2071,
+      "placement": "PLACEMENT",
+      "durationMs": 0
+    }
+  ],
+  "registries": []
+}

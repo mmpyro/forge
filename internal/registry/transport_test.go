@@ -130,7 +130,29 @@ func reset(w http.ResponseWriter, _ *http.Request) {
 	conn.Close()
 }
 
-func testClient() *http.Client { return newHTTPClient(Limits{Global: 16, PerHost: 8}, 10*time.Second) }
+func testClient() *http.Client {
+	return newHTTPClient(Limits{Global: 16, PerHost: 8}, 10*time.Second, newStats())
+}
+
+func TestStatsCountAttemptsRetriesAndChallenges(t *testing.T) {
+	url, _ := scripted(t, status(503), status(401), status(200))
+	st := newStats()
+	c := newHTTPClient(Limits{Global: 4, PerHost: 4}, 10*time.Second, st)
+	for range 2 { // 503 → retried → 401 (not retried); then 200
+		resp, err := c.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+	}
+	got := st.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("hosts = %+v", got)
+	}
+	if g := got[0]; g.Requests != 3 || g.Retries != 1 || g.AuthRounds != 1 {
+		t.Fatalf("stats = %+v, want 3 requests, 1 retry, 1 auth round", g)
+	}
+}
 
 func mustGet(t *testing.T, url string) *http.Response {
 	t.Helper()

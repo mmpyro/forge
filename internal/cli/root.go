@@ -33,6 +33,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stderr, "Error:", err)
 	var ue usageError
 	if errors.As(err, &ue) || strings.HasPrefix(err.Error(), "unknown command") {
+		if cmd, ok := jsonUsageCommand(args); ok {
+			usageJSON(stdout, cmd, err)
+		}
 		return 2
 	}
 	return 1
@@ -41,7 +44,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 func newRootCmd(out io.Writer) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "forge",
-		Short:         "Fast dependency fetching for Helm charts in OCI registries",
+		Short:         "Fast dependency fetching for Helm charts",
 		Version:       versionText(),
 		SilenceErrors: true,
 		SilenceUsage:  true,

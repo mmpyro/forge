@@ -20,6 +20,7 @@ permissions:
 jobs:
   unit:
     name: Unit tests (${{ matrix.os }})
+    timeout-minutes: 60
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -73,6 +74,7 @@ jobs:
 
   integration:
     name: Integration and compat
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -142,6 +144,9 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Helm plugin smoke test (dep update via `helm forge`)
+        run: make plugin-smoke
+
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
@@ -156,10 +161,49 @@ jobs:
         if: always()
         run: make registry-down
 
-  summary:
-    name: Summary
+  plugin:
+    name: Helm plugin (${{ matrix.os }}, Helm ${{ matrix.helm }})
+    timeout-minutes: 60
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        helm: [v3.22.0, v4.1.4]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ matrix.helm }}
+
+      # Installs this checkout with `helm plugin install`; the install hook downloads
+      # from a local fake release, so download + checksum verification run for real.
+      - name: Plugin smoke test
+        env:
+          HELMS: helm
+        run: scripts/plugin-smoke.sh
+
+  # Sentinel: the single required status check for branch protection, so matrix
+  # entries don't each have to be listed there. It passes only when every job in
+  # `needs` (all matrix entries included) succeeded; failed, cancelled or skipped
+  # jobs make it fail. Add new jobs to `needs` to gate merges on them.
+  ci-passed:
+    name: CI passed
+    timeout-minutes: 60
     runs-on: ubuntu-latest
-    needs: [unit, integration]
+    needs: [unit, integration, plugin]
     if: always()
 
     steps:
@@ -173,8 +217,17 @@ jobs:
             echo "|---|---|"
             echo "| Unit tests | $(icon '${{ needs.unit.result }}') ${{ needs.unit.result }} |"
             echo "| Integration and compat | $(icon '${{ needs.integration.result }}') ${{ needs.integration.result }} |"
+            echo "| Helm plugin | $(icon '${{ needs.plugin.result }}') ${{ needs.plugin.result }} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Fail if any job failed
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-        run: exit 1
+      - name: Require every job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed=$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<<"$NEEDS")
+          if [ -n "$failed" ]; then
+            echo "Jobs that did not succeed:"
+            echo "$failed"
+            exit 1
+          fi
+          echo "All jobs succeeded."

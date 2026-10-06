@@ -2,3 +2,4 @@
 /.bin/
 /testdata/seeds/stale/*.tgz
 /bench/results.md
+/.chartrepo/

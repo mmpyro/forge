@@ -4,6 +4,7 @@
 //
 //	blobs/sha256/<hex>               chart archives, read-only
 //	refs/<registry>/<repo>/<version> JSON Ref: what a tag pointed to
+//	refs/<scheme>/<host>/<path>/<chart>/<version>  same for chart repositories
 //	tmp/                             in-flight writes
 //
 // Every write lands in tmp/ and is renamed into place, so concurrent forge
@@ -28,19 +29,26 @@ var ErrDigestMismatch = errors.New("digest mismatch")
 
 // Ref records what a tag pointed to when forge last fetched it.
 type Ref struct {
-	Manifest  digest.Digest `json:"manifest"`
+	Manifest  digest.Digest `json:"manifest,omitempty"` // OCI only
 	Layer     digest.Digest `json:"layer"`
 	Size      int64         `json:"size"`
+	File      string        `json:"file,omitempty"` // chart repositories: archive name from the chart URL
 	FetchedAt time.Time     `json:"fetched_at"`
 }
 
 // Store is a cache rooted at one directory.
 type Store struct{ root string }
 
-// DefaultRoot is $HELM_FORGE_CACHE, else ~/.cache/helm-forge.
+// DefaultRoot is $HELM_FORGE_CACHE, else $HELM_CACHE_HOME/forge when run as
+// a Helm plugin (Helm sets HELM_PLUGIN_DIR), else ~/.cache/helm-forge.
 func DefaultRoot() (string, error) {
 	if v := os.Getenv("HELM_FORGE_CACHE"); v != "" {
 		return v, nil
+	}
+	if os.Getenv("HELM_PLUGIN_DIR") != "" {
+		if v := os.Getenv("HELM_CACHE_HOME"); v != "" {
+			return filepath.Join(v, "forge"), nil
+		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -119,6 +127,43 @@ func (s *Store) PutBlob(want digest.Digest, r io.Reader) (string, error) {
 	}
 	return dst, nil
 }
+
+// PutBlobStream streams r into the cache when its digest is not known up
+// front, and returns the digest, size and path of the stored blob.
+func (s *Store) PutBlobStream(r io.Reader) (digest.Digest, int64, string, error) {
+	var (
+		d digest.Digest
+		n int64
+	)
+	tmp, err := s.writeTemp(func(w io.Writer) error {
+		dg := digest.SHA256.Digester()
+		var err error
+		n, err = io.Copy(io.MultiWriter(w, dg.Hash()), r)
+		d = dg.Digest()
+		return err
+	})
+	if err != nil {
+		return "", 0, "", err
+	}
+	dst := s.BlobPath(d)
+	if s.HasBlob(d) {
+		os.Remove(tmp)
+		return d, n, dst, nil
+	}
+	if err := os.Chmod(tmp, 0o444); err != nil {
+		os.Remove(tmp)
+		return "", 0, "", err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return "", 0, "", err
+	}
+	return d, n, dst, nil
+}
+
+// TempDir is the cache's scratch directory, on the same file system as the
+// blobs. Callers remove what they create there.
+func (s *Store) TempDir() string { return filepath.Join(s.root, "tmp") }
 
 // GetRef returns the cached ref for repo at version. Missing or unreadable
 // entries report false.

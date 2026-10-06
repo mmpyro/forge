@@ -114,6 +114,28 @@ func TestPutBlobConcurrentWritersSameDigest(t *testing.T) {
 	assertEmptyTmp(t, s)
 }
 
+func TestPutBlobStreamHashesWhileStoring(t *testing.T) {
+	s := newStore(t)
+	data := []byte("chart archive bytes")
+	for range 2 { // the second write finds the blob already there
+		d, n, p, err := s.PutBlobStream(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d != digest.FromBytes(data) || n != int64(len(data)) || p != s.BlobPath(d) {
+			t.Fatalf("got %s %d %s", d, n, p)
+		}
+		if got, _ := os.ReadFile(p); !bytes.Equal(got, data) {
+			t.Fatal("content differs")
+		}
+	}
+	assertEmptyTmp(t, s)
+	if _, _, _, err := s.PutBlobStream(iotest.ErrReader(errors.New("boom"))); err == nil {
+		t.Fatal("want reader error")
+	}
+	assertEmptyTmp(t, s)
+}
+
 func TestRefsRoundTrip(t *testing.T) {
 	s := newStore(t)
 	want := store.Ref{
@@ -184,6 +206,29 @@ func TestDefaultRootHonoursEnv(t *testing.T) {
 	t.Setenv("HOME", home)
 	if got, _ := store.DefaultRoot(); got != filepath.Join(home, ".cache", "helm-forge") {
 		t.Fatalf("got %s", got)
+	}
+}
+
+func TestDefaultRootAsHelmPlugin(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HELM_FORGE_CACHE", "")
+	t.Setenv("HELM_CACHE_HOME", "/helm/cache")
+
+	// HELM_CACHE_HOME alone (set in the user's shell) does not move the cache.
+	t.Setenv("HELM_PLUGIN_DIR", "")
+	if got, _ := store.DefaultRoot(); got != filepath.Join(home, ".cache", "helm-forge") {
+		t.Fatalf("outside plugin: got %s", got)
+	}
+
+	t.Setenv("HELM_PLUGIN_DIR", "/helm/plugins/forge")
+	if got, _ := store.DefaultRoot(); got != filepath.Join("/helm/cache", "forge") {
+		t.Fatalf("as plugin: got %s", got)
+	}
+
+	t.Setenv("HELM_FORGE_CACHE", "/somewhere/else")
+	if got, _ := store.DefaultRoot(); got != "/somewhere/else" {
+		t.Fatalf("HELM_FORGE_CACHE must win: got %s", got)
 	}
 }
 

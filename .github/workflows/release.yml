@@ -9,6 +9,25 @@ permissions:
   contents: read
 
 jobs:
+  # `helm plugin install … --version vX.Y.Z` checks out the tag and downloads the
+  # binary named by plugin.yaml's version, so the two must match.
+  plugin-version:
+    name: plugin.yaml version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Compare versions
+        run: |
+          want=${GITHUB_REF_NAME#v}
+          got=$(sed -n 's/^version:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p' plugin.yaml)
+          if [ "$got" != "$want" ]; then
+            echo "::error file=plugin.yaml::plugin.yaml version is '$got' but the tag is $GITHUB_REF_NAME; bump plugin.yaml before tagging"
+            exit 1
+          fi
+          echo "plugin.yaml version $got matches $GITHUB_REF_NAME"
+
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
@@ -18,7 +37,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: ci
+    needs: [ci, plugin-version]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: true
@@ -143,3 +162,38 @@ jobs:
             echo
             echo "$NOTES"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  plugin-smoke:
+    name: helm plugin install (${{ matrix.os }}, Helm ${{ matrix.helm }})
+    needs: release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        helm: [v3.22.0, v4.1.4]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ matrix.helm }}
+
+      # Installs from GitHub exactly as users do: git checkout of the tag, then the
+      # install hook downloads the release binary and checks it against checksums.txt.
+      - name: Install plugin from GitHub
+        run: |
+          flags=(--version "$GITHUB_REF_NAME")
+          # Helm 4 verifies plugin signatures by default; git sources can't be verified.
+          [[ "${{ matrix.helm }}" == v4* ]] && flags+=(--verify=false)
+          helm plugin install "https://github.com/${{ github.repository }}" "${flags[@]}"
+
+      - name: Run helm forge
+        run: |
+          out=$(helm forge --version | head -1)
+          echo "$out"
+          [ "$out" = "forge ${GITHUB_REF_NAME#v}" ]
+          helm forge dep --help >/dev/null

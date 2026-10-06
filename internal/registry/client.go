@@ -36,6 +36,7 @@ type Options struct {
 	Limits          Limits
 	RequestTimeout  time.Duration
 	UserAgent       string
+	HTTP            *HTTP // shared clients; nil builds them from Limits and RequestTimeout
 }
 
 // ChartManifest is what forge needs from a chart's manifest.
@@ -49,6 +50,7 @@ type ChartManifest struct {
 type Client struct {
 	auth      *auth.Client
 	plainHTTP bool
+	http      *HTTP
 
 	mu    sync.Mutex
 	repos map[string]*remote.Repository
@@ -68,14 +70,22 @@ func New(o Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load registry credentials %s: %w", o.CredentialsFile, err)
 	}
+	h := o.HTTP
+	if h == nil {
+		h = NewHTTP(o.Limits, o.RequestTimeout)
+	}
 	ac := &auth.Client{
-		Client:     newHTTPClient(o.Limits, o.RequestTimeout),
+		Client:     h.Client(),
 		Cache:      auth.NewCache(),
 		Credential: credentials.Credential(store),
 	}
 	ac.SetUserAgent(o.UserAgent)
-	return &Client{auth: ac, plainHTTP: o.PlainHTTP, repos: map[string]*remote.Repository{}}, nil
+	return &Client{auth: ac, plainHTTP: o.PlainHTTP, http: h, repos: map[string]*remote.Repository{}}, nil
 }
+
+// Stats reports the requests sent so far through the client's HTTP, per
+// host (see HTTP.Stats). When HTTP is shared, that includes chart repositories.
+func (c *Client) Stats() []HostStats { return c.http.Stats() }
 
 // RepoRef turns a Chart.yaml repository URL and chart name into an OCI
 // repository reference: ("oci://ghcr.io/acme/charts", "redis") → "ghcr.io/acme/charts/redis".

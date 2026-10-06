@@ -11,6 +11,7 @@ import (
 	"github.com/mmarszalek/helm-forge/internal/cli"
 	"github.com/mmarszalek/helm-forge/internal/testutil"
 	"github.com/mmarszalek/helm-forge/internal/testutil/fakeregistry"
+	"github.com/mmarszalek/helm-forge/internal/testutil/fakerepo"
 )
 
 func run(args ...string) (int, string, string) {
@@ -69,6 +70,26 @@ func TestDepUpdateThenBuild(t *testing.T) {
 	code, out, errs = run("dep", "build", "--plain-http", "--registry-config", cfg, chartDir)
 	if code != 0 || !strings.Contains(out, "Saved 1 charts (1 cached, 0 downloaded)") {
 		t.Fatalf("build: code=%d out=%q err=%q", code, out, errs)
+	}
+}
+
+func TestDepUpdateFromChartRepositoryAlias(t *testing.T) {
+	r := fakerepo.New(t)
+	r.AddChart("dep-a", "1.0.0", testutil.ChartTgz(t, "dep-a", "1.0.0"))
+	chartDir := t.TempDir()
+	yaml := "apiVersion: v2\nname: redis\nversion: 0.1.0\ndependencies:\n  - name: dep-a\n    version: ^1.0.0\n    repository: '@myrepo'\n"
+	_ = os.WriteFile(filepath.Join(chartDir, "Chart.yaml"), []byte(yaml), 0o644)
+	repos := filepath.Join(t.TempDir(), "repositories.yaml")
+	_ = os.WriteFile(repos, []byte("repositories:\n- name: myrepo\n  url: "+r.URL()+"\n"), 0o644)
+	t.Setenv("HELM_FORGE_CACHE", t.TempDir())
+
+	code, out, errs := run("dep", "update", "--repository-config", repos, chartDir)
+	if code != 0 || !strings.Contains(out, "Saved 1 charts (0 cached, 1 downloaded)") {
+		t.Fatalf("update: code=%d out=%q err=%q", code, out, errs)
+	}
+	code, _, errs = run("dep", "update", "--repository-config", filepath.Join(t.TempDir(), "none.yaml"), chartDir)
+	if code != 1 || !strings.Contains(errs, "no repository definition for @myrepo") {
+		t.Fatalf("missing alias: code=%d err=%q", code, errs)
 	}
 }
 

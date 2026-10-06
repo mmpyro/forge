@@ -1,0 +1,31 @@
+# Helm plugin manifest: `helm plugin install https://github.com/mmpyro/forge --version vX.Y.Z`.
+# Legacy (Helm 3) format, which Helm 4 still loads. platformHooks needs Helm >= 3.18.
+# `version` must equal the release tag: the install hook downloads the binary of this version,
+# and the release workflow refuses to tag a mismatch.
+name: forge
+version: 2.0.0
+usage: Fast parallel `dependency build/update` for OCI, chart repository and file:// dependencies
+description: |-
+  forge replaces `helm dependency build` / `helm dependency update` for charts
+  whose dependencies live in OCI registries, chart repositories (index.yaml) or
+  local file:// directories. It writes the same charts/*.tgz and Chart.lock that
+  Helm would.
+  Example: helm forge dep update ./my-chart
+ignoreFlags: false
+platformCommand:
+  - os: windows
+    command: $HELM_PLUGIN_DIR/bin/forge.exe
+  - command: $HELM_PLUGIN_DIR/bin/forge
+platformHooks:
+  install:
+    - os: windows
+      command: powershell
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$HELM_PLUGIN_DIR/scripts/install-plugin.ps1"]
+    - command: sh
+      args: ["$HELM_PLUGIN_DIR/scripts/install-plugin.sh"]
+  update:
+    - os: windows
+      command: powershell
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$HELM_PLUGIN_DIR/scripts/install-plugin.ps1"]
+    - command: sh
+      args: ["$HELM_PLUGIN_DIR/scripts/install-plugin.sh"]

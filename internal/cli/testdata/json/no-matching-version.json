@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "command": "dep update",
+  "chart": "CHART",
+  "success": false,
+  "durationMs": 0,
+  "summary": {
+    "saved": 0,
+    "cached": 0,
+    "downloaded": 0,
+    "local": 0,
+    "failed": 1,
+    "skipped": 1
+  },
+  "lockWritten": false,
+  "dependencies": [
+    {
+      "name": "dep-a",
+      "constraint": "^1.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "status": "skipped"
+    },
+    {
+      "name": "dep-b",
+      "constraint": "^3.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "status": "failed",
+      "error": {
+        "code": "no_matching_version",
+        "message": "no version of dep-b matches \"^3.0.0\"",
+        "hint": "available versions: 2.0.0"
+      }
+    }
+  ],
+  "registries": [
+    {
+      "host": "REGISTRY",
+      "requests": 2,
+      "retries": 0,
+      "authRounds": 0
+    }
+  ]
+}

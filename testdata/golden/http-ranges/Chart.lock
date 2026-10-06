@@ -1,0 +1,9 @@
+dependencies:
+- name: dep-a
+  repository: http://localhost:5002
+  version: 1.2.0
+- name: dep-b
+  repository: http://localhost:5002/
+  version: 0.1.0
+digest: sha256:e19ce2cc98bbe81b5fe4a0751e72dcb79b064e74f7e40e02af3d290609a90bbc
+generated: "2026-10-04T22:11:39.638454+02:00"
