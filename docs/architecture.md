@@ -2,31 +2,39 @@
 
 ## A run, end to end
 
+```mermaid
+flowchart TD
+    CMD["cmd/forge"] --> CLI["internal/cli"] --> ENG["internal/engine"]
+    ENG --> META["chartmeta<br/><small>Chart.yaml / Chart.lock</small>"]
+    ENG --> RC["repoconfig<br/><small>@name, creds, TLS</small>"]
+    ENG --> RES["resolve<br/><small>constraints → versions</small>"]
+    ENG --> FET["fetch<br/><small>parallel, dedupe</small>"]
+    RES --> PAR{{"par.ByHost<br/><small>auth-aware fan-out</small>"}}
+    FET --> PAR
+    PAR --> REG["registry<br/><small>OCI tags, manifest, blob</small>"]
+    PAR --> CR["chartrepo<br/><small>index.yaml, archives</small>"]
+    FET --> STORE[("store<br/><small>CAS cache</small>")]
+    STORE --> MAT["materialize<br/><small>staging → charts/</small>"]
+    LOCAL["file:// deps<br/><small>chartutil.Save</small>"] --> MAT
+    MAT --> LOCK["chartmeta.WriteLock<br/><small>update only, lockdigest</small>"]
+
+    click CLI href "../usage/#commands" "cobra commands, flags, exit codes, text and -o json output"
+    click ENG href "#the-run-report" "Build / Update orchestration; Summary with one Dep per dependency"
+    click META href "#helm-is-the-oracle" "Load Chart.yaml/Chart.lock via Helm v4 SDK, write Chart.lock"
+    click RC href "../usage/#authentication" "Helm's repositories.yaml: @name resolution, credentials, TLS"
+    click RES href "#helm-is-the-oracle" "Semver constraint → exact version via tags/list, index.yaml or file://"
+    click FET href "#deduplication" "Parallel scheduler, dedupe by repo:version and digest/URL"
+    click PAR href "#one-auth-handshake-per-registry" "First request per host alone, then the rest in parallel"
+    click REG href "#one-registry-client-per-run" "oras-go client, shared token cache, limits, retries"
+    click CR href "#helm-is-the-oracle" "Classic chart repositories: index.yaml, archive URLs, creds, TLS"
+    click STORE href "#the-store" "Content-addressed cache, lock-free across processes"
+    click MAT href "#placing-files" "reflink → hardlink → copy, staging + swap"
+    click LOCAL href "../usage/#what-ends-up-in-charts" "file:// charts are packaged every run"
+    click LOCK href "#helm-is-the-oracle" "Chart.lock written byte-for-byte as Helm would"
 ```
-cmd/forge ─► internal/cli ─► internal/engine
-                               │
-             ┌─────────────────┼──────────────────────────────┐
-             ▼                 ▼                              ▼
-         chartmeta          resolve ──┬─► registry ◄──┬─── fetch
-     (Chart.yaml/lock)   (constraints │  (OCI tags,   │  (parallel, dedupe)
-         repoconfig       → versions) │   manifest,   │       │
-    (@name, creds, TLS)               │   blob)       │       │
-                                      └─► chartrepo ◄─┘       │
-                                         (index.yaml,         │
-                                          archives)           │
-                                  par: auth-aware fan-out     │
-                                  for both, by host           ▼
-                                                            store ◄── file:// deps are
-                                                         (CAS cache)  packaged locally
-                                                              │       (chartutil.Save)
-                                                              ▼              │
-                                                         materialize ◄───────┘
-                                                     (staging → charts/)
-                                                              │
-                                                              ▼
-                                                   chartmeta.WriteLock
-                                                   (update only, lockdigest)
-```
+
+On the docs site, hover a box for its role and click it to jump to the
+section that explains it.
 
 `dep update`:
 
@@ -92,6 +100,26 @@ Firing 40 requests at a cold registry would trigger 40 `401` challenges and
 - `par.ByHost` runs the first item of each host alone. Its challenge is
   answered and the token cached; then the rest of that host's items fan out.
   Leaders of different hosts run concurrently.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant F as forge (par.ByHost)
+    participant R as registry
+    participant T as token server
+    F->>R: first request (leader, alone)
+    R-->>F: 401 + challenge
+    F->>T: token for every repository's pull scope
+    T-->>F: token (cached for the run)
+    F->>R: leader retries with token
+    par fan-out
+        F->>R: chart 2 (same token)
+    and
+        F->>R: chart 3 (same token)
+    and
+        F->>R: chart N (same token)
+    end
+```
 
 ### Request budget
 

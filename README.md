@@ -1,7 +1,7 @@
 # forge
 
 <p align="center">
-  <img src="images/logo.png" alt="forge logo" width="200">
+  <img src="docs/images/logo.png" alt="forge logo" width="200">
 </p>
 
 `forge` replaces `helm dependency build` / `helm dependency update` for charts
@@ -117,7 +117,7 @@ A parent chart with 50 subcharts (2.4 MiB in total): `forge dep build` took
 forge started with 14 of the 50 charts in its cache; helm was mostly waiting on
 the network (11 % CPU).
 
-![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](images/benchmark.png)
+![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](docs/images/benchmark.png)
 
 For a reproducible comparison (40 charts, +50 ms latency, cold and warm), run
 `make bench`; see [Development → Benchmark](docs/development.md#benchmark--scriptsbenchsh).

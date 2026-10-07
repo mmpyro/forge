@@ -10,12 +10,17 @@ Linux), or PowerShell (Windows).
 
 **1. Install**, pinned to a release tag:
 
-```sh
-# Helm 4
-helm plugin install https://github.com/mmpyro/forge --version v2.0.0 --verify=false
-# Helm 3 (3.18+)
-helm plugin install https://github.com/mmpyro/forge --version v2.0.0
-```
+=== "Helm 4"
+
+    ```sh
+    helm plugin install https://github.com/mmpyro/forge --version v2.0.0 --verify=false
+    ```
+
+=== "Helm 3 (3.18+)"
+
+    ```sh
+    helm plugin install https://github.com/mmpyro/forge --version v2.0.0
+    ```
 
 Helm clones the repository at that tag, then runs the install hook
 (`scripts/install-plugin.sh`, or `install-plugin.ps1` on Windows). The hook:
@@ -107,18 +112,20 @@ below point at v2.0.0.
 | Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-amd64.exe) |
 | Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-arm64.exe) |
 
-On macOS / Linux:
+=== "Binary (macOS / Linux)"
 
-```sh
-os=$(uname -s | tr '[:upper:]' '[:lower:]')
-arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-$os-$arch"
-chmod +x forge && sudo mv forge /usr/local/bin/
-forge --version
-```
+    ```sh
+    os=$(uname -s | tr '[:upper:]' '[:lower:]')
+    arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
+    curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-$os-$arch"
+    chmod +x forge && sudo mv forge /usr/local/bin/
+    forge --version
+    ```
 
-On Windows, download the `.exe`, rename it to `forge.exe` and put it in a
-directory on your `PATH`.
+=== "Binary (Windows)"
+
+    Download the `.exe`, rename it to `forge.exe` and put it in a
+    directory on your `PATH`.
 
 ### From source
 
@@ -244,23 +251,26 @@ stdout instead of the `Saved …` line. They print it on success and on failure.
 stderr as text, so `forge dep build -o json | jq` always gets valid JSON.
 Exit codes do not change.
 
+!!! tip "Interactive"
+    On the docs site, click the :material-plus-circle: markers to see what each field means.
+
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 1, // (1)!
   "command": "dep build",
   "chart": "./my-chart",
-  "success": false,
+  "success": false, // (2)!
   "durationMs": 412,
-  "summary": { "saved": 2, "cached": 1, "downloaded": 0, "local": 1, "failed": 1, "skipped": 0 },
-  "lockWritten": false,
-  "dependencies": [
+  "summary": { "saved": 2, "cached": 1, "downloaded": 0, "local": 1, "failed": 1, "skipped": 0 }, // (3)!
+  "lockWritten": false, // (4)!
+  "dependencies": [ // (5)!
     {
       "name": "redis",
       "alias": "cache",
       "version": "18.1.0",
-      "constraint": "^18.0.0",
+      "constraint": "^18.0.0", // (6)!
       "repository": "oci://ghcr.io/acme/charts",
-      "status": "cached",
+      "status": "cached", // (7)!
       "digest": "sha256:…",
       "sizeBytes": 104857,
       "durationMs": 3
@@ -270,7 +280,7 @@ Exit codes do not change.
       "version": "0.3.0",
       "constraint": "~0.3.0",
       "repository": "file://../common",
-      "status": "local",
+      "status": "local", // (8)!
       "sizeBytes": 2048,
       "durationMs": 4
     },
@@ -281,7 +291,7 @@ Exit codes do not change.
       "repository": "oci://ghcr.io/acme/charts",
       "status": "failed",
       "durationMs": 41,
-      "error": {
+      "error": { // (9)!
         "code": "not_found",
         "httpStatus": 404,
         "message": "404 not found",
@@ -289,11 +299,31 @@ Exit codes do not change.
       }
     }
   ],
-  "registries": [
+  "registries": [ // (10)!
     { "host": "ghcr.io", "requests": 3, "retries": 0, "authRounds": 1 }
   ]
 }
 ```
+
+1.  Raised only for changes that could break a consumer. New fields can be
+    added without raising it.
+2.  `true` exactly when the exit code is `0`. Use `jq -e .success` as the CI gate.
+3.  Counts of `dependencies` by status. `saved` = `cached` + `downloaded` + `local`.
+    `charts/` is updated only when `success` is `true`.
+4.  `true` when `Chart.lock` was written — by `dep update`, or by `dep build`
+    without a lock.
+5.  One entry per `Chart.yaml` dependency, in order. Empty when the run stopped
+    before resolving, e.g. `Chart.lock` out of sync.
+6.  The version exactly as written in `Chart.yaml`. `version` is what got locked.
+7.  `cached`: served from the cache without any request. `downloaded`: needed at
+    least one request. See the [status table](#status-values).
+8.  Packaged from a `file://` directory on every run — no cache, no request.
+    `file://` dependencies have `sizeBytes` but no `digest`.
+9.  Present when `status` is `failed`. Match on `code`, never on `message`.
+    See the [error codes](#error-codes).
+10. One per host contacted, sorted by host. `requests` counts every HTTP request
+    (retries included), `retries` repeats after 408/429/5xx/network errors,
+    `authRounds` `401` challenges. A warm run has none.
 
 | Field | Meaning |
 |---|---|
@@ -314,6 +344,8 @@ Exit codes do not change.
 | `registries[]` | One per host contacted (OCI registries and chart repositories), sorted by host. `requests` counts every HTTP request, retries included. `retries` counts repeats after 408/429/5xx/network errors. `authRounds` counts `401` challenges. Token servers and blob-redirect hosts appear as hosts of their own. A warm run has none |
 | `error` | Present for failures that no single dependency explains, e.g. a lock out of sync, a timeout, or an unreadable `Chart.yaml` |
 
+#### Status values
+
 `status` is one of:
 
 | Status | Meaning |
@@ -323,6 +355,8 @@ Exit codes do not change.
 | `local` | Packaged from a `file://` directory (every run; no cache, no request) |
 | `failed` | See `error` |
 | `skipped` | Not attempted because the run stopped first (another dependency had no matching version or an unsupported repository) |
+
+#### Error codes
 
 Every `error` object has a stable `code`, a `message`, and optionally `httpStatus`
 and `hint`. Match on `code`, not on `message`:
