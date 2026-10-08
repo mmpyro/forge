@@ -22,6 +22,8 @@ make golden                # regenerate testdata/golden/* with real `helm depend
 make bench                 # hyperfine: helm vs forge cold/warm, 40 deps behind toxiproxy +50ms
 make plugin-smoke          # helm plugin install of this checkout (helm + .bin/helm3), via a local fake release
 make registry-down         # stop the local registry container
+make docs-serve            # docs site (MkDocs Material, docs/ + mkdocs.yml) at http://127.0.0.1:8000/forge/
+make docs-build            # mkdocs build --strict → site/ (what the Docs workflow deploys to GitHub Pages)
 ```
 
 - Integration, compat, golden and bench need `docker` and `helm` (v4) on PATH; bench also needs `hyperfine` and `jq`.

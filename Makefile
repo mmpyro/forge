@@ -1,4 +1,4 @@
-.PHONY: test build registry-up registry-down fixtures golden test-integration helm3 compat bench plugin-smoke
+.PHONY: test build registry-up registry-down fixtures golden test-integration helm3 compat bench plugin-smoke docs-build docs-serve
 
 VERSION ?= 0.1.0
 LDFLAGS = -ldflags "-X main.Version=$(VERSION)"
@@ -36,3 +36,14 @@ bench: build fixtures
 
 plugin-smoke:
 	scripts/plugin-smoke.sh
+
+.venv-docs: docs/requirements.txt
+	python3 -m venv .venv-docs
+	.venv-docs/bin/pip install -q -r docs/requirements.txt
+	touch .venv-docs
+
+docs-build: .venv-docs
+	.venv-docs/bin/mkdocs build --strict
+
+docs-serve: .venv-docs
+	.venv-docs/bin/mkdocs serve

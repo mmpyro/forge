@@ -8,6 +8,7 @@
 | integration, compat, golden | + `docker`, `helm` v4 on `PATH` |
 | compat | + Helm 3 (`make helm3` downloads it to `.bin/helm3`) |
 | bench | + `hyperfine`, `jq` |
+| docs site | Python 3 (`make docs-serve` creates `.venv-docs/`) |
 
 ## Commands
 
@@ -23,6 +24,8 @@ make golden             # regenerate testdata/golden/* with real helm
 make bench              # hyperfine: helm vs forge cold/warm
 make plugin-smoke       # helm plugin install of this checkout, for helm + .bin/helm3
 make registry-down      # stop the local registry
+make docs-serve         # docs site with live reload, http://127.0.0.1:8000/forge/
+make docs-build         # mkdocs build --strict → site/
 ```
 
 `make plugin-smoke` (`scripts/plugin-smoke.sh`) builds the host binary into a
@@ -116,7 +119,7 @@ The README's figure is a separate, real-world measurement: a parent chart with
 50 subcharts against a remote registry, forge with 14 of them already cached,
 helm with `--skip-refresh`:
 
-![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](../images/benchmark.png)
+![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](images/benchmark.png)
 
 ## Fixtures
 
@@ -156,6 +159,13 @@ forge is wrong.
 | `integration` | ubuntu | `make fixtures`, integration tests → JUnit test report, `make compat` → summary table, `make plugin-smoke` |
 | `plugin` | ubuntu, macos, windows × Helm 3.22 / 4.1 | `scripts/plugin-smoke.sh`: install this checkout as a Helm plugin, checksum rejection, `helm forge --version` |
 | `summary` | ubuntu | Job results in the run summary; fails if any job failed |
+
+`.github/workflows/docs.yml` builds the docs site (MkDocs Material, config in
+`mkdocs.yml`, pinned in `docs/requirements.txt`) with `mkdocs build --strict`
+on PRs that touch `docs/` or `mkdocs.yml`, and on `main` deploys it to GitHub
+Pages (<https://mmpyro.github.io/forge/>). The pages in `docs/` stay readable
+on github.com; site-only extras (tabs, annotated code, mermaid clicks) degrade
+to plain Markdown there.
 
 ## Releasing
 
