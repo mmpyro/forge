@@ -169,6 +169,101 @@ Downloads exactly the versions pinned in `Chart.lock`.
   *"the lock file (Chart.lock) is out of sync with the dependencies file
   (Chart.yaml). Please update the dependencies"*. Fix: run `forge dep update`.
 
+### `forge dep tree [CHART]`
+
+Shows every dependency in `Chart.yaml`: its constraint, the version
+`Chart.lock` pins, where it comes from, and whether `dep build` would serve it
+from the cache. Reads `Chart.yaml`, `Chart.lock`, `repositories.yaml` and the
+cache only — **no network requests**.
+
+```
+my-chart 1.0.0
+├── redis (cache)  ^18.0.0  ->  18.1.0  oci://ghcr.io/acme/charts   104 KiB  cached
+├── nginx          >=1 <2   ->  1.27.3  https://charts.example.com  -        not cached
+└── common         ~0.3.0   ->  0.3.0   file://../common            -        local
+```
+
+States: `cached` (`dep build` makes no request for it), `not cached`
+(`dep build` downloads it), `local` (`file://`, packaged on every run) and
+`no lock` (no `Chart.lock` entry: run `forge dep update`). A `Chart.lock` that
+is out of sync with `Chart.yaml` is reported below the tree; entries are then
+matched by name and repository. Only the chart's own dependencies are shown,
+not theirs.
+
+### `forge dep why NAME [CHART]`
+
+Explains one dependency, by chart name or alias (every alias of a chart if you
+give its name): the `Chart.yaml` entry (constraint, repository, condition,
+tags), the locked version, the cached archive (digest, size, when it was
+fetched and last used, path) and whether `charts/` has it. No network
+requests.
+
+```
+redis (cache)
+  Chart.yaml:  ^18.0.0 from oci://ghcr.io/acme/charts
+  condition:   cache.enabled
+  Chart.lock:  18.1.0
+  cache:       cached, sha256:…, 104 KiB, fetched 2026-10-01T09:12:44Z, last used 3h ago
+               /home/me/.cache/helm-forge/blobs/sha256/…
+  charts/:     redis-18.1.0.tgz (present)
+```
+
+An unknown name is a usage error (exit code `2`) that lists the chart's
+dependencies.
+
+### `forge dep outdated [CHART]`
+
+Compares `Chart.lock` with what registries and chart repositories offer now:
+one `tags/list` per OCI repository and one `index.yaml` per chart repository
+(like `dep update`), nothing is downloaded and nothing is written.
+
+```
+NAME           CONSTRAINT  LOCKED  WANTED  LATEST  STATE
+redis (cache)  ^18.0.0     18.1.0  18.4.2  19.0.1  update in constraint
+nginx          1.27.3      1.27.3  1.27.3  1.28.0  newer outside constraint
+common         ~0.3.0      0.3.0   0.3.0   0.3.0   up to date
+2 of 3 dependencies are not up to date
+```
+
+- `WANTED` is what `forge dep update` would lock now; `LATEST` the highest
+  version available.
+- States: `up to date`; `update in constraint` (`dep update` would pick
+  `WANTED`); `newer outside constraint` (widen the constraint in `Chart.yaml`
+  to get `LATEST`); `no match` (nothing satisfies the constraint any more);
+  `no lock` (no `Chart.lock` entry).
+- Prereleases count as `LATEST` only with `--include-prerelease`, or when the
+  constraint itself selects one.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--include-prerelease` | `false` | Count prerelease versions as the latest |
+| `--fail-if-outdated` | `false` | Exit with code `1` if any dependency is not `up to date` (JSON: `success: false`, error code `outdated`) |
+
+It also takes `--concurrency`, `--per-host`, `--plain-http`, `--timeout`,
+`--registry-config` and `--repository-config` as `dep update` does. If a
+repository can't be listed, the whole command fails with the same classified
+error `dep update` would report.
+
+### JSON output of `tree`, `why` and `outdated`
+
+With `-o json` all three print one document: `schemaVersion`, `command`,
+`chart` (the argument), `success`, `chartName`, `chartVersion`, `hasLock`,
+`lockInSync` and `dependencies`. Each dependency has `name`, `alias`,
+`constraint`, `repository`, `condition`, `tags`, `locked`, `state` (`cached`,
+`not_cached`, `local`, `no_lock`), `digest`, `sizeBytes`, `fetchedAt`,
+`lastUsed`, `blobPath`, `fileName` and `inCharts`. `dep why` lists only the
+matching dependencies. `dep outdated` adds `durationMs`,
+`summary` (`total`, `outdated`), `registries` (as for `dep build`) and, per
+dependency, `wanted`, `latest` and `freshness` (`up_to_date`,
+`update_in_constraint`, `newer_outside_constraint`, `no_match`, `no_lock`).
+
+To gate CI on it:
+
+```sh
+forge dep outdated ./my-chart -o json > outdated.json || true
+jq -r '.dependencies[] | select(.freshness != "up_to_date") | "\(.name): \(.locked) → \(.latest) (\(.freshness))"' outdated.json
+```
+
 `dependency` is an alias of `dep`, so `forge dependency build` also works.
 
 ### `forge cache path`
@@ -178,6 +273,74 @@ Prints the cache directory. Useful for CI cache steps.
 ### `forge cache clean`
 
 Deletes the cache directory.
+
+### `forge cache ls`
+
+Lists every cached chart: name, version, size, when it was last used and
+where it came from. Makes no requests, and does not create the cache if it
+does not exist yet.
+
+```
+CHART  VERSION  SIZE     LAST-USED  SOURCE
+dep-a  1.0.0    2.0 KiB  3h ago     oci://ghcr.io/acme/charts
+nginx  1.27.3   41 KiB   12d ago    https://charts.example.com
+2 charts, 43 KiB in /home/me/.cache/helm-forge
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--sort` | `name` | `name`, `size` (largest first) or `age` (least recently used first) |
+| `-o`, `--output` | `text` | `text` or `json` |
+
+A chart whose archive is gone shows `missing` as its size. The total counts
+an archive shared by several charts (e.g. the same chart in two registries)
+once.
+
+### `forge cache gc`
+
+Removes charts from the cache, least recently used first:
+
+```sh
+forge cache gc --older-than 30d          # not used for 30 days
+forge cache gc --max-size 2GiB           # keep at most 2 GiB
+forge cache gc --older-than 30d --max-size 2GiB --dry-run
+```
+
+1. Charts not used within `--older-than` are removed.
+2. Then, while the cache holds more than `--max-size`, the least recently used
+   archives (and every chart pointing at them) are removed.
+3. Entries that point at a missing archive, unreadable entries and archives
+   nothing points at are always removed.
+
+"Used" means fetched **or served from the cache**: every cache hit in
+`dep build` / `dep update` marks the chart as used, so charts a CI job needs
+every day stay, however long ago they were downloaded.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--older-than` | — | Remove charts not used for this long: `30d`, `2w`, `12h`, `90m` |
+| `--max-size` | — | Keep at most this much: bytes, `500MB` (powers of 1000) or `2GiB` (powers of 1024) |
+| `--grace` | `1h` | Never remove anything used or written this recently, so a `dep build` running at the same time keeps its charts |
+| `--dry-run` | `false` | Print what would be removed; remove nothing |
+| `-v`, `--verbose` | `false` | List removed charts |
+| `-o`, `--output` | `text` | `text` or `json` |
+
+At least one of `--older-than` and `--max-size` is required (exit code `2`
+otherwise); use `forge cache clean` to remove everything. `gc` takes no lock
+and is safe to run while other forge processes use the cache: a run that
+loses an archive to `gc` just downloads it again.
+
+The space freed is the size of the removed archives. An archive that is
+hardlinked into some chart's `charts/` keeps using disk until that copy is
+deleted too.
+
+With `-o json`, both commands print one document with `schemaVersion`,
+`command` (`cache ls` / `cache gc`), `cache` (the directory) and `success`.
+`cache ls` adds `summary` (`charts`, `sizeBytes`) and `entries`; `cache gc`
+adds `dryRun`, `summary` (`chartsRemoved`, `blobsRemoved`, `bytesFreed`,
+`blobsKept`, `bytesKept`) and `removed`. Each entry has `name`, `version`,
+`repository`, `source` (`oci` or `repo`), `state` (`ok`, `missing` or
+`invalid`), `digest`, `sizeBytes`, `lastUsed` and `fetchedAt`.
 
 ## Flags (`dep build` and `dep update`)
 
@@ -373,6 +536,7 @@ and `hint`. Match on `code`, not on `message`:
 | `timeout` | `--timeout` reached, or a request timed out |
 | `lock_out_of_sync` | `Chart.lock` does not match `Chart.yaml` (top-level `error` only) |
 | `interrupted` | SIGINT/SIGTERM (top-level `error` only) |
+| `outdated` | `dep outdated --fail-if-outdated` found a dependency that is not up to date (top-level `error` only) |
 | `usage` | Usage error, exit code `2` (see below) |
 | `unknown` | Anything else. Read `message` |
 
@@ -418,8 +582,8 @@ A run that fails leaves `charts/` exactly as it was.
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Something failed — each failed dependency is listed |
-| `2` | Usage error (bad flag, too many arguments, `--concurrency 0`, …) |
+| `1` | Something failed — each failed dependency is listed; or `dep outdated --fail-if-outdated` found outdated dependencies |
+| `2` | Usage error (bad flag, too many arguments, `--concurrency 0`, unknown name for `dep why`, `cache gc` without limits, …) |
 
 ## Errors and retries
 
@@ -468,6 +632,8 @@ lives under Helm's cache dir, so ask `helm forge cache path`):
     key: forge-${{ hashFiles('**/Chart.lock') }}
     restore-keys: forge-
 - run: helm forge dep build ./charts/my-app -o json > forge.json
+# Keep the saved cache bounded: drop what this and earlier jobs stopped using.
+- run: helm forge cache gc --older-than 30d --max-size 2GiB
 ```
 
 Drop `--verify=false` if the runner has Helm 3. With the standalone binary, use

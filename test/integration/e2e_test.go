@@ -108,6 +108,65 @@ func reachable(t *testing.T, u string) {
 	resp.Body.Close()
 }
 
+// TestInspectRequestCounts checks that dep tree and dep why stay offline and
+// that dep outdated lists each repository once.
+func TestInspectRequestCounts(t *testing.T) {
+	reachable(t, "http://"+upstream+"/v2/")
+	reachable(t, "http://"+chartrepo+"/index.yaml")
+	count := new(atomic.Int64)
+	regHost := countingProxy(t, upstream, count)
+	repoHost := countingProxy(t, chartrepo, count)
+	flags := []string{
+		"--plain-http",
+		"--registry-config", filepath.Join(t.TempDir(), "config.json"),
+		"--repository-config", filepath.Join(t.TempDir(), "repositories.yaml"),
+	}
+	for _, fx := range []string{"ranges", "alias", "http-ranges", "http-mixed", "file-local"} {
+		t.Run(fx, func(t *testing.T) {
+			dir := copyFixture(t, fx, regHost, repoHost)
+			t.Setenv("HELM_FORGE_CACHE", t.TempDir())
+			forge(t, append([]string{"dep", "update", dir}, flags...)...)
+			c, err := chartmeta.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			count.Store(0)
+			forge(t, "dep", "tree", dir)
+			forge(t, "dep", "why", c.Dependencies[0].Name, dir)
+			if got := count.Load(); got != 0 {
+				t.Errorf("dep tree/why: %d requests, want 0", got)
+			}
+
+			// One tags/list per OCI repository (+ an auth round per registry),
+			// one index.yaml per chart repository; file:// costs nothing.
+			lists, hosts := map[string]bool{}, map[string]bool{}
+			for _, d := range c.Dependencies {
+				switch {
+				case strings.HasPrefix(d.Repository, "oci://"):
+					lists[d.Repository+"/"+d.Name] = true
+					hosts[regHost] = true
+				case strings.HasPrefix(d.Repository, "http://"):
+					lists[strings.TrimSuffix(d.Repository, "/")] = true
+				}
+			}
+			limit := int64(len(lists) + len(hosts))
+			count.Store(0)
+			var r result
+			out := forge(t, append([]string{"dep", "outdated", dir, "-o", "json"}, flags...)...)
+			if err := json.Unmarshal([]byte(out), &r); err != nil {
+				t.Fatalf("bad JSON: %v\n%s", err, out)
+			}
+			if got := count.Load(); got > limit {
+				t.Errorf("dep outdated: %d requests, want <= %d", got, limit)
+			}
+			if got, want := r.requests(), count.Load(); got != want {
+				t.Errorf("dep outdated: JSON reports %d requests, proxies saw %d", got, want)
+			}
+		})
+	}
+}
+
 func TestColdAndWarmRequestCounts(t *testing.T) {
 	reachable(t, "http://"+upstream+"/v2/")
 	reachable(t, "http://"+chartrepo+"/index.yaml")
@@ -192,6 +251,24 @@ func TestColdAndWarmRequestCounts(t *testing.T) {
 			}
 			if entries, _ := os.ReadDir(filepath.Join(dir, "charts")); len(entries) != len(unique) {
 				t.Errorf("charts/ has %d entries, want %d", len(entries), len(unique))
+			}
+
+			// After a GC that empties the cache, a build is cold again and
+			// stays within the cold budget.
+			forge(t, "cache", "gc", "--max-size", "1B", "--older-than", "1s", "--grace", "0s")
+			if out := forge(t, "cache", "ls"); !strings.Contains(out, "0 charts") {
+				t.Errorf("cache not empty after gc:\n%s", out)
+			}
+			_ = os.RemoveAll(filepath.Join(dir, "charts"))
+			count.Store(0)
+			regc := depJSON(t, "build", dir)
+			if got := count.Load(); got > int64(limit) {
+				t.Errorf("build after gc: %d requests, want <= %d", got, limit)
+			}
+			for _, d := range regc.Dependencies {
+				if d.Status == "cached" {
+					t.Errorf("build after gc: %s still cached", d.Name)
+				}
 			}
 		})
 	}

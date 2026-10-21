@@ -22,6 +22,8 @@ var ErrLockOutOfSync = errors.New("the lock file (Chart.lock) is out of sync wit
 // Chart is the part of a chart directory that dependency management needs.
 type Chart struct {
 	Dir          string
+	Name         string
+	Version      string
 	Dependencies []*chart.Dependency // as declared in Chart.yaml
 	Lock         *chart.Lock         // nil when Chart.lock is absent
 }
@@ -36,7 +38,7 @@ func Load(dir string) (*Chart, error) {
 	if c.Metadata.APIVersion != chart.APIVersionV2 {
 		return nil, fmt.Errorf("chart %s uses apiVersion %q; forge supports apiVersion v2 only", dir, c.Metadata.APIVersion)
 	}
-	return &Chart{Dir: dir, Dependencies: c.Metadata.Dependencies, Lock: c.Lock}, nil
+	return &Chart{Dir: dir, Name: c.Metadata.Name, Version: c.Metadata.Version, Dependencies: c.Metadata.Dependencies, Lock: c.Lock}, nil
 }
 
 // CheckLock reports ErrLockOutOfSync when Chart.lock's digest does not match

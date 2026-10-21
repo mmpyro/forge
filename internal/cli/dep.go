@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/mmarszalek/helm-forge/internal/chartrepo"
 	"github.com/mmarszalek/helm-forge/internal/engine"
@@ -18,16 +19,102 @@ import (
 
 type runFunc func(context.Context, engine.Options) (engine.Summary, error)
 
-type depFlags struct {
+// netFlags are the flags of every command that talks to registries and
+// chart repositories.
+type netFlags struct {
 	concurrency    int
 	perHost        int
-	refresh        bool
 	plainHTTP      bool
-	verbose        bool
 	timeout        time.Duration
 	registryConfig string
 	repoConfig     string
-	output         string
+}
+
+type depFlags struct {
+	netFlags
+	refresh bool
+	verbose bool
+	output  string
+}
+
+func addRepoConfigFlag(fl *pflag.FlagSet, p *string) {
+	fl.StringVar(p, "repository-config", repoconfig.DefaultFile(), "path to Helm's repositories.yaml (chart repository names and credentials)")
+}
+
+func addOutputFlag(fl *pflag.FlagSet, p *string) {
+	fl.StringVarP(p, "output", "o", outputText, "output format: text or json (json goes to stdout)")
+}
+
+func addNetFlags(fl *pflag.FlagSet, f *netFlags) {
+	fl.IntVar(&f.concurrency, "concurrency", 16, "maximum requests in flight in total")
+	fl.IntVar(&f.perHost, "per-host", 8, "maximum requests in flight per host")
+	fl.BoolVar(&f.plainHTTP, "plain-http", false, "use insecure HTTP connections to OCI registries")
+	fl.DurationVar(&f.timeout, "timeout", 5*time.Minute, "time limit for the whole run")
+	fl.StringVar(&f.registryConfig, "registry-config", registry.DefaultCredentialsFile(), "path to Helm's registry config file")
+	addRepoConfigFlag(fl, &f.repoConfig)
+}
+
+func (f netFlags) validate() error {
+	if f.concurrency < 1 || f.perHost < 1 {
+		return usageError{errors.New("--concurrency and --per-host must be at least 1")}
+	}
+	if f.timeout <= 0 {
+		return usageError{errors.New("--timeout must be positive")}
+	}
+	return nil
+}
+
+// netRuntime is what one networked run shares: the cache, Helm's repository
+// config and one set of HTTP clients for registries and chart repositories.
+type netRuntime struct {
+	http    *registry.HTTP
+	reg     *registry.Client
+	repos   *chartrepo.Client
+	repoCfg *repoconfig.Config
+	store   *store.Store
+}
+
+func newRuntime(f netFlags) (*netRuntime, error) {
+	root, err := store.DefaultRoot()
+	if err != nil {
+		return nil, err
+	}
+	st, err := store.Open(root)
+	if err != nil {
+		return nil, err
+	}
+	repos, err := repoconfig.Load(f.repoConfig)
+	if err != nil {
+		return nil, err
+	}
+	userAgent := "helm-forge/" + Version
+	h := registry.NewHTTP(registry.Limits{Global: f.concurrency, PerHost: f.perHost}, 60*time.Second)
+	reg, err := registry.New(registry.Options{
+		CredentialsFile: f.registryConfig,
+		PlainHTTP:       f.plainHTTP,
+		UserAgent:       userAgent,
+		HTTP:            h,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &netRuntime{http: h, reg: reg, repos: chartrepo.New(h, repos, userAgent), repoCfg: repos, store: st}, nil
+}
+
+func (rt *netRuntime) options(dir string, refresh bool) engine.Options {
+	return engine.Options{ChartDir: dir, Registry: rt.reg, Repos: rt.repos, RepoConfig: rt.repoCfg, Store: rt.store, Refresh: refresh}
+}
+
+// runErr turns a context error into forge's wording, keeping it matchable
+// with errors.Is.
+func runErr(err error, timeout time.Duration) error {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("timed out after %s: %w", timeout, context.DeadlineExceeded)
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("interrupted: %w", context.Canceled)
+	}
+	return err
 }
 
 func newDepCmd(out io.Writer) *cobra.Command {
@@ -35,6 +122,9 @@ func newDepCmd(out io.Writer) *cobra.Command {
 	dep.AddCommand(
 		depSubcommand(out, "build", "Download the dependencies pinned in Chart.lock into charts/", engine.Build),
 		depSubcommand(out, "update", "Resolve Chart.yaml dependencies, download them and update Chart.lock", engine.Update),
+		newDepTreeCmd(out),
+		newDepWhyCmd(out),
+		newDepOutdatedCmd(out),
 	)
 	return dep
 }
@@ -54,48 +144,21 @@ func depSubcommand(out io.Writer, name, short string, run runFunc) *cobra.Comman
 		},
 	}
 	fl := cmd.Flags()
-	fl.IntVar(&f.concurrency, "concurrency", 16, "maximum requests in flight in total")
-	fl.IntVar(&f.perHost, "per-host", 8, "maximum requests in flight per host")
+	addNetFlags(fl, &f.netFlags)
 	fl.BoolVar(&f.refresh, "refresh", false, "re-check versions with registries and repositories instead of trusting the cache")
-	fl.BoolVar(&f.plainHTTP, "plain-http", false, "use insecure HTTP connections to OCI registries")
 	fl.BoolVarP(&f.verbose, "verbose", "v", false, "print per-dependency status (cached, downloaded, local, failed)")
-	fl.DurationVar(&f.timeout, "timeout", 5*time.Minute, "time limit for the whole run")
-	fl.StringVar(&f.registryConfig, "registry-config", registry.DefaultCredentialsFile(), "path to Helm's registry config file")
-	fl.StringVar(&f.repoConfig, "repository-config", repoconfig.DefaultFile(), "path to Helm's repositories.yaml (chart repository names and credentials)")
-	fl.StringVarP(&f.output, "output", "o", outputText, "output format: text or json (json goes to stdout)")
+	addOutputFlag(fl, &f.output)
 	return cmd
 }
 
 func runDep(ctx context.Context, out io.Writer, command, dir string, f depFlags, run runFunc) error {
-	if f.output != outputText && f.output != outputJSON {
-		return usageError{fmt.Errorf("--output must be %q or %q, not %q", outputText, outputJSON, f.output)}
-	}
-	if f.concurrency < 1 || f.perHost < 1 {
-		return usageError{errors.New("--concurrency and --per-host must be at least 1")}
-	}
-	if f.timeout <= 0 {
-		return usageError{errors.New("--timeout must be positive")}
-	}
-	root, err := store.DefaultRoot()
-	if err != nil {
+	if err := checkOutput(f.output); err != nil {
 		return err
 	}
-	st, err := store.Open(root)
-	if err != nil {
+	if err := f.validate(); err != nil {
 		return err
 	}
-	repos, err := repoconfig.Load(f.repoConfig)
-	if err != nil {
-		return err
-	}
-	userAgent := "helm-forge/" + Version
-	h := registry.NewHTTP(registry.Limits{Global: f.concurrency, PerHost: f.perHost}, 60*time.Second)
-	reg, err := registry.New(registry.Options{
-		CredentialsFile: f.registryConfig,
-		PlainHTTP:       f.plainHTTP,
-		UserAgent:       userAgent,
-		HTTP:            h,
-	})
+	rt, err := newRuntime(f.netFlags)
 	if err != nil {
 		return err
 	}
@@ -103,23 +166,11 @@ func runDep(ctx context.Context, out io.Writer, command, dir string, f depFlags,
 	defer cancel()
 
 	start := time.Now()
-	sum, err := run(ctx, engine.Options{
-		ChartDir:   dir,
-		Registry:   reg,
-		Repos:      chartrepo.New(h, repos, userAgent),
-		RepoConfig: repos,
-		Store:      st,
-		Refresh:    f.refresh,
-	})
+	sum, err := run(ctx, rt.options(dir, f.refresh))
 	elapsed := time.Since(start)
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		err = fmt.Errorf("timed out after %s: %w", f.timeout, context.DeadlineExceeded)
-	case errors.Is(err, context.Canceled):
-		err = fmt.Errorf("interrupted: %w", context.Canceled)
-	}
+	err = runErr(err, f.timeout)
 	if f.output == outputJSON {
-		if werr := writeJSON(out, newJSONResult(command, dir, sum, h.Stats(), elapsed, err)); werr != nil && err == nil {
+		if werr := writeJSON(out, newJSONResult(command, dir, sum, rt.http.Stats(), elapsed, err)); werr != nil && err == nil {
 			return werr
 		}
 	}

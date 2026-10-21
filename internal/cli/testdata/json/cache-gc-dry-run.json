@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "command": "cache gc",
+  "cache": "CACHE",
+  "success": true,
+  "dryRun": true,
+  "summary": {
+    "chartsRemoved": 2,
+    "blobsRemoved": 2,
+    "bytesFreed": 4142,
+    "blobsKept": 0,
+    "bytesKept": 0
+  },
+  "removed": [
+    {
+      "name": "dep-a",
+      "version": "1.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "source": "oci",
+      "state": "ok",
+      "digest": "sha256:bf3523ffdc9a1c2e2bb1dfb2f12054433d2d4f1e0e0a8e29512d21c1c9ba0c83",
+      "sizeBytes": 2071,
+      "lastUsed": "TIME",
+      "fetchedAt": "TIME"
+    },
+    {
+      "name": "dep-b",
+      "version": "2.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "source": "oci",
+      "state": "ok",
+      "digest": "sha256:a4c5dc75bdcb2421095c5c8dd9cdf2fbec75e9f2625ac14d741f79cd7a5317d3",
+      "sizeBytes": 2071,
+      "lastUsed": "TIME",
+      "fetchedAt": "TIME"
+    }
+  ]
+}

@@ -123,15 +123,10 @@ func Resolve(ctx context.Context, s Sources, deps []*chart.Dependency) ([]*chart
 			continue
 		}
 		vs := versions[*lookups[i]]
-		found := false
-		for _, t := range vs {
-			if v, err := semver.NewVersion(t); err == nil && constraints[i].Check(v) {
-				locked[i].Version = v.Original()
-				found = true
-				break
-			}
-		}
-		if !found {
+		v, found := Pick(vs, constraints[i])
+		if found {
+			locked[i].Version = v
+		} else {
 			missing = append(missing, Missing{Index: i, Name: d.Name, Repository: d.Repository, Constraint: d.Version, Available: vs})
 		}
 	}
@@ -139,6 +134,81 @@ func Resolve(ctx context.Context, s Sources, deps []*chart.Dependency) ([]*chart
 		return nil, &NoMatchError{Missing: missing}
 	}
 	return locked, nil
+}
+
+// Pick returns the first version in vs (highest first, as listed by the
+// registry or index) that satisfies c, spelled as listed — what Resolve
+// locks.
+func Pick(vs []string, c *semver.Constraints) (string, bool) {
+	for _, t := range vs {
+		if v, err := semver.NewVersion(t); err == nil && c.Check(v) {
+			return v.Original(), true
+		}
+	}
+	return "", false
+}
+
+// Newest returns the highest version in vs, skipping prereleases unless
+// includePrerelease, or "" when there is none.
+func Newest(vs []string, includePrerelease bool) string {
+	var best *semver.Version
+	for _, t := range vs {
+		v, err := semver.NewVersion(t)
+		if err != nil || (v.Prerelease() != "" && !includePrerelease) {
+			continue
+		}
+		if best == nil || v.GreaterThan(best) {
+			best = v
+		}
+	}
+	if best == nil {
+		return ""
+	}
+	return best.Original()
+}
+
+// Available lists every dependency's versions, highest first: an OCI
+// repository's tags (exact versions included, unlike Resolve), a chart
+// repository index's entries, or a file:// chart's own version. Each
+// repository is listed once.
+func Available(ctx context.Context, s Sources, deps []*chart.Dependency) ([][]string, error) {
+	out := make([][]string, len(deps))
+	lookups := make([]*list, len(deps))
+	var lists []list
+	for i, d := range deps {
+		var l list
+		switch {
+		case strings.HasPrefix(d.Repository, "file://"):
+			ch, err := LoadLocal(d.Repository, s.ChartDir)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = []string{ch.Metadata.Version}
+			continue
+		case strings.HasPrefix(d.Repository, "oci://"):
+			repo, err := registry.RepoRef(d.Repository, d.Name)
+			if err != nil {
+				return nil, err
+			}
+			l = list{oci: repo}
+		default:
+			l = list{repoURL: d.Repository, name: d.Name}
+		}
+		if !slices.Contains(lists, l) {
+			lists = append(lists, l)
+		}
+		lookups[i] = &l
+	}
+	versions, err := listAll(ctx, s, lists)
+	if err != nil {
+		return nil, err
+	}
+	for i, l := range lookups {
+		if l != nil {
+			out[i] = versions[*l]
+		}
+	}
+	return out, nil
 }
 
 // Missing is a dependency whose constraint no available version satisfies.

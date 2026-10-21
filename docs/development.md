@@ -78,7 +78,12 @@ reverse proxies, with no `repositories.yaml`, and assert:
   proxies counted;
 - warm `dep build` makes **zero** requests, reports no hosts, and every
   dependency is `cached` (`local` for `file://`);
-- `charts/` has one entry per unique chart.
+- `charts/` has one entry per unique chart;
+- after `cache gc` empties the cache, `dep build` is cold again and within
+  the cold budget;
+- `dep tree` / `dep why` make **zero** requests, and `dep outdated` at most
+  one `tags/list` per OCI repository (+ one auth round per registry) and one
+  `index.yaml` per chart repository.
 
 If you change fetch or auth ordering and these fail, the request budget
 regressed — see [Architecture → Request budget](architecture.md#request-budget).

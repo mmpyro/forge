@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -157,6 +158,10 @@ func runError(err error) *jsonError {
 	case errors.Is(err, chartmeta.ErrLockOutOfSync):
 		return &jsonError{Code: codeLockOutOfSync, Message: err.Error(), Hint: "run 'forge dep update'"}
 	}
+	var oe *OutdatedError
+	if errors.As(err, &oe) {
+		return &jsonError{Code: codeOutdated, Message: err.Error(), Hint: "run 'forge dep update', or widen the constraints in Chart.yaml"}
+	}
 	host := ""
 	var te *resolve.TagsError
 	if errors.As(err, &te) {
@@ -178,8 +183,14 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-// jsonUsageCommand reports whether args ask a dep subcommand for JSON
-// output, and which one ("dep build"). Flags were not parsed — that is
+// jsonCommands are the subcommands with -o json, by parent command.
+var jsonCommands = map[string][]string{
+	"dep":   {"build", "update", "tree", "why", "outdated"},
+	"cache": {"ls", "gc"},
+}
+
+// jsonUsageCommand reports whether args ask a subcommand with JSON output
+// for it, and which one ("dep build"). Flags were not parsed — that is
 // what failed — so args are scanned by hand.
 func jsonUsageCommand(args []string) (string, bool) {
 	var words []string
@@ -199,11 +210,17 @@ func jsonUsageCommand(args []string) (string, bool) {
 			words = append(words, a)
 		}
 	}
-	if !wantJSON || len(words) < 2 || (words[0] != "dep" && words[0] != "dependency") ||
-		(words[1] != "build" && words[1] != "update") {
+	if !wantJSON || len(words) < 2 {
 		return "", false
 	}
-	return "dep " + words[1], true
+	parent := words[0]
+	if parent == "dependency" {
+		parent = "dep"
+	}
+	if !slices.Contains(jsonCommands[parent], words[1]) {
+		return "", false
+	}
+	return parent + " " + words[1], true
 }
 
 func usageJSON(w io.Writer, command string, err error) {
