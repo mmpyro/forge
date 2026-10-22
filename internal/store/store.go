@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/opencontainers/go-digest"
@@ -26,6 +27,8 @@ import (
 
 // ErrDigestMismatch means downloaded content did not match its digest.
 var ErrDigestMismatch = errors.New("digest mismatch")
+
+const putRefAttempts = 10
 
 // Ref records what a tag pointed to when forge last fetched it.
 type Ref struct {
@@ -200,15 +203,18 @@ func (s *Store) PutRef(repo, version string, ref Ref) error {
 	if err != nil {
 		return err
 	}
-	// A concurrent GC may prune the (empty) directory between MkdirAll and
-	// Rename; recreate it and try again.
+	// A concurrent GC may prune the (empty) directory, or a parent, between
+	// MkdirAll and Rename; recreate it and try again. A GC pass removes each
+	// directory at most once, so a writer loses at most once per path level
+	// to it. macOS reports a mkdir or rename into a directory removed
+	// mid-call as EINVAL rather than ENOENT.
 	for attempt := 0; ; attempt++ {
 		if err = os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
 			if err = os.Rename(tmp, p); err == nil {
 				return nil
 			}
 		}
-		if attempt == 2 || !errors.Is(err, os.ErrNotExist) {
+		if attempt == putRefAttempts-1 || !(errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.EINVAL)) {
 			os.Remove(tmp)
 			return err
 		}
