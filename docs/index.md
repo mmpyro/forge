@@ -99,14 +99,14 @@ Pick how you run Helm. The choice is remembered across the docs.
 
     ```sh
     # git sources can't be signature-verified, so --verify=false is required
-    helm plugin install https://github.com/mmpyro/forge --version v2.0.0 --verify=false
+    helm plugin install https://github.com/mmpyro/forge --version v2.1.0 --verify=false
     helm forge --version
     ```
 
 === "Helm 3 (3.18+)"
 
     ```sh
-    helm plugin install https://github.com/mmpyro/forge --version v2.0.0
+    helm plugin install https://github.com/mmpyro/forge --version v2.1.0
     helm forge --version
     ```
 
@@ -115,15 +115,15 @@ Pick how you run Helm. The choice is remembered across the docs.
     ```sh
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-    curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-$os-$arch"
+    curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-$os-$arch"
     chmod +x forge && sudo mv forge /usr/local/bin/
     forge --version
     ```
 
 === "Binary (Windows)"
 
-    Download [`forge-windows-amd64.exe`](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-amd64.exe)
-    or [`forge-windows-arm64.exe`](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-arm64.exe),
+    Download [`forge-windows-amd64.exe`](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-amd64.exe)
+    or [`forge-windows-arm64.exe`](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-arm64.exe),
     rename it to `forge.exe` and put it in a directory on your `PATH`.
 
     ```powershell
@@ -138,6 +138,20 @@ Pick how you run Helm. The choice is remembered across the docs.
     ```
 
 Mirrors, checksums, upgrades and troubleshooting: [Usage → Install](usage.md#install).
+
+## What's new in 2.1
+
+- **Inspect dependencies.** `dep tree` shows each dependency's constraint,
+  locked version, source and cache state; `dep why NAME` explains one of them.
+  Both make no requests. `dep outdated` compares `Chart.lock` with what
+  registries offer now, and `--fail-if-outdated` gates CI on it. See
+  [Usage → `forge dep tree`](usage.md#forge-dep-tree-chart).
+- **Manage the cache.** `cache ls` lists cached charts with size and last use;
+  `cache gc --older-than 30d --max-size 2GiB` evicts least recently used ones
+  and is safe to run alongside other forge processes. See
+  [Usage → `forge cache gc`](usage.md#forge-cache-gc).
+
+[Release notes and downloads](https://github.com/mmpyro/forge/releases/tag/v2.1.0).
 
 ## What's new in 2.0
 

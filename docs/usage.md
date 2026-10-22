@@ -13,13 +13,13 @@ Linux), or PowerShell (Windows).
 === "Helm 4"
 
     ```sh
-    helm plugin install https://github.com/mmpyro/forge --version v2.0.0 --verify=false
+    helm plugin install https://github.com/mmpyro/forge --version v2.1.0 --verify=false
     ```
 
 === "Helm 3 (3.18+)"
 
     ```sh
-    helm plugin install https://github.com/mmpyro/forge --version v2.0.0
+    helm plugin install https://github.com/mmpyro/forge --version v2.1.0
     ```
 
 Helm clones the repository at that tag, then runs the install hook
@@ -33,7 +33,7 @@ Helm clones the repository at that tag, then runs the install hook
 **2. Verify:**
 
 ```sh
-helm plugin list              # NAME  VERSION  DESCRIPTION → forge  2.0.0  …
+helm plugin list              # NAME  VERSION  DESCRIPTION → forge  2.1.0  …
 helm forge --version
 helm forge cache path         # $HELM_CACHE_HOME/forge
 ```
@@ -65,7 +65,7 @@ Notes:
 
   ```sh
   HELM_FORGE_PLUGIN_URL=https://mirror.example.com/forge \
-    helm plugin install https://github.com/mmpyro/forge --version v2.0.0
+    helm plugin install https://github.com/mmpyro/forge --version v2.1.0
   ```
 
 **Upgrade or remove.** The plugin is pinned to the tag it was installed from,
@@ -101,23 +101,24 @@ brew uninstall helm-forge && brew untap mmpyro/forge
 
 Prebuilt binaries and `checksums.txt` are attached to every
 [GitHub release](https://github.com/mmpyro/forge/releases). The links
-below point at v2.0.0.
+below point at [v2.1.0](https://github.com/mmpyro/forge/releases/tag/v2.1.0)
+([`checksums.txt`](https://github.com/mmpyro/forge/releases/download/v2.1.0/checksums.txt)).
 
 | Platform | Asset | Download |
 |---|---|---|
-| macOS (Apple Silicon) | `forge-darwin-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-darwin-arm64) |
-| macOS (Intel) | `forge-darwin-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-darwin-amd64) |
-| Linux (x86_64) | `forge-linux-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-linux-amd64) |
-| Linux (ARM64) | `forge-linux-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-linux-arm64) |
-| Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-amd64.exe) |
-| Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-arm64.exe) |
+| macOS (Apple Silicon) | `forge-darwin-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-darwin-arm64) |
+| macOS (Intel) | `forge-darwin-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-darwin-amd64) |
+| Linux (x86_64) | `forge-linux-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-linux-amd64) |
+| Linux (ARM64) | `forge-linux-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-linux-arm64) |
+| Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-amd64.exe) |
+| Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-arm64.exe) |
 
 === "Binary (macOS / Linux)"
 
     ```sh
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-    curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-$os-$arch"
+    curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-$os-$arch"
     chmod +x forge && sudo mv forge /usr/local/bin/
     forge --version
     ```
@@ -623,7 +624,7 @@ lives under Helm's cache dir, so ask `helm forge cache path`):
 
 ```yaml
 - uses: azure/setup-helm@v4
-- run: helm plugin install https://github.com/mmpyro/forge --version v2.0.0 --verify=false
+- run: helm plugin install https://github.com/mmpyro/forge --version v2.1.0 --verify=false
 - id: forge-cache
   run: echo "dir=$(helm forge cache path)" >> "$GITHUB_OUTPUT"
 - uses: actions/cache@v4
