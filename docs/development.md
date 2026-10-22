@@ -193,13 +193,13 @@ to plain Markdown there.
 To cut a release:
 
 1. Set `version:` in `plugin.yaml` to the new version (no `v`), update the
-   version in the install commands and download links in `README.md` and
-   `docs/usage.md`, and merge that to `main`.
+   version in the install commands and download links in `README.md`,
+   `docs/index.md` and `docs/usage.md`, and merge that to `main`.
 2. Tag and push:
 
 ```sh
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.2.0
+git push origin v2.2.0
 ```
 
 Asset names (`forge-<os>-<arch>`, `.exe` on Windows) are what the download

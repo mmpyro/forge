@@ -20,6 +20,20 @@ helm template my-release ./my-chart
 `helm forge …` (the plugin) and `forge …` (the standalone binary) take the
 same commands and flags.
 
+## What's new in 2.1
+
+- **Inspect dependencies.** `dep tree` shows each dependency's constraint,
+  locked version, source and cache state; `dep why NAME` explains one of them.
+  Both make no requests. `dep outdated` compares `Chart.lock` with what
+  registries offer now, and `--fail-if-outdated` gates CI on it. See
+  [Usage → `forge dep tree`](docs/usage.md#forge-dep-tree-chart).
+- **Manage the cache.** `cache ls` lists cached charts with size and last use;
+  `cache gc --older-than 30d --max-size 2GiB` evicts least recently used ones
+  and is safe to run alongside other forge processes. See
+  [Usage → `forge cache gc`](docs/usage.md#forge-cache-gc).
+
+[Full release notes](https://github.com/mmpyro/forge/releases/tag/v2.1.0).
+
 ## What's new in 2.0
 
 - **Chart repositories and `file://` dependencies.** Besides OCI registries,
@@ -39,16 +53,16 @@ Needs Helm 3.18+ or Helm 4, on macOS, Linux or Windows (amd64/arm64).
 
    ```sh
    # Helm 4: git sources can't be signature-verified, so --verify=false is required
-   helm plugin install https://github.com/mmpyro/forge --version v2.0.0 --verify=false
+   helm plugin install https://github.com/mmpyro/forge --version v2.1.0 --verify=false
 
    # Helm 3 (3.18+)
-   helm plugin install https://github.com/mmpyro/forge --version v2.0.0
+   helm plugin install https://github.com/mmpyro/forge --version v2.1.0
    ```
 
 2. Check it:
 
    ```sh
-   helm plugin list          # forge  2.0.0  …
+   helm plugin list          # forge  2.1.0  …
    helm forge --version
    ```
 
@@ -75,27 +89,28 @@ helm plugin install https://github.com/mmpyro/forge --version vX.Y.Z [--verify=f
 Mirrors, troubleshooting and moving from Homebrew:
 [Usage → Install](docs/usage.md#install).
 
-## Standalone binary (v2.0.0)
+## Standalone binary (v2.1.0)
 
 Prebuilt binaries and `checksums.txt` are attached to every
 [GitHub release](https://github.com/mmpyro/forge/releases). The links
-below point at v2.0.0.
+below point at [v2.1.0](https://github.com/mmpyro/forge/releases/tag/v2.1.0)
+([`checksums.txt`](https://github.com/mmpyro/forge/releases/download/v2.1.0/checksums.txt)).
 
 | Platform | Asset | Download |
 |---|---|---|
-| macOS (Apple Silicon) | `forge-darwin-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-darwin-arm64) |
-| macOS (Intel) | `forge-darwin-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-darwin-amd64) |
-| Linux (x86_64) | `forge-linux-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-linux-amd64) |
-| Linux (ARM64) | `forge-linux-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-linux-arm64) |
-| Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-amd64.exe) |
-| Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-windows-arm64.exe) |
+| macOS (Apple Silicon) | `forge-darwin-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-darwin-arm64) |
+| macOS (Intel) | `forge-darwin-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-darwin-amd64) |
+| Linux (x86_64) | `forge-linux-amd64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-linux-amd64) |
+| Linux (ARM64) | `forge-linux-arm64` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-linux-arm64) |
+| Windows (x86_64) | `forge-windows-amd64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-amd64.exe) |
+| Windows (ARM64) | `forge-windows-arm64.exe` | [Download](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-arm64.exe) |
 
 Install on macOS / Linux:
 
 ```sh
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 arch=$(uname -m); case $arch in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; esac
-curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.0.0/forge-$os-$arch"
+curl -fsSL -o forge "https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-$os-$arch"
 chmod +x forge && sudo mv forge /usr/local/bin/
 forge --version
 ```
