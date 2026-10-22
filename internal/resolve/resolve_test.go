@@ -3,10 +3,13 @@ package resolve_test
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Masterminds/semver/v3"
 	chart "helm.sh/helm/v4/pkg/chart/v2"
 
 	"github.com/mmarszalek/helm-forge/internal/resolve"
@@ -117,6 +120,71 @@ func TestNoMatchingVersion(t *testing.T) {
 	var nm *resolve.NoMatchError
 	if !errors.As(err, &nm) || len(nm.Missing) != 1 || nm.Missing[0].Constraint != "^2.0.0" || nm.Missing[0].Nearest() != "1.0.0" {
 		t.Fatalf("want *NoMatchError for dep-a, got %#v", err)
+	}
+}
+
+func TestPick(t *testing.T) {
+	vs := []string{"2.0.0", "1.3.0-rc.1", "1.2.0+build.7", "1.1.0", "junk"}
+	for constraint, want := range map[string]string{
+		"^1.0.0":    "1.2.0+build.7",
+		">=1.3.0-0": "2.0.0",
+		"~1.1.0":    "1.1.0",
+		"^3.0.0":    "",
+	} {
+		c, err := semver.NewConstraint(constraint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := resolve.Pick(vs, c)
+		if got != want || ok != (want != "") {
+			t.Errorf("Pick(%q) = %q, %v; want %q", constraint, got, ok, want)
+		}
+	}
+}
+
+func TestNewest(t *testing.T) {
+	vs := []string{"1.0.0", "2.1.0-rc.1", "2.0.0", "not-semver"}
+	if got := resolve.Newest(vs, false); got != "2.0.0" {
+		t.Errorf("stable newest = %q", got)
+	}
+	if got := resolve.Newest(vs, true); got != "2.1.0-rc.1" {
+		t.Errorf("newest with prereleases = %q", got)
+	}
+	if got := resolve.Newest([]string{"1.0.0-rc.1"}, false); got != "" {
+		t.Errorf("only prereleases = %q, want none", got)
+	}
+}
+
+type fakeIndex map[string][]string // "<repoURL> <name>" → versions
+
+func (f fakeIndex) Versions(_ context.Context, repoURL, name string) ([]string, error) {
+	return f[repoURL+" "+name], nil
+}
+
+func TestAvailableListsEveryKindOnce(t *testing.T) {
+	f := newFake(map[string][]string{"r.example/charts/dep-a": {"2.0.0", "1.0.0"}})
+	idx := fakeIndex{"https://charts.example dep-b": {"0.2.0", "0.1.0"}}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "local"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "local", "Chart.yaml"), []byte("apiVersion: v2\nname: local\nversion: 0.3.0\n"), 0o644)
+
+	a1, a2 := dep("dep-a", "1.0.0"), dep("dep-a", "^1.0.0") // exact versions are listed too
+	b := &chart.Dependency{Name: "dep-b", Version: "~0.1.0", Repository: "https://charts.example"}
+	l := &chart.Dependency{Name: "local", Version: "0.3.0", Repository: "file://local"}
+	got, err := resolve.Available(context.Background(), resolve.Sources{Tags: f, Index: idx, ChartDir: dir}, []*chart.Dependency{a1, a2, b, l})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"2.0.0", "1.0.0"}, {"2.0.0", "1.0.0"}, {"0.2.0", "0.1.0"}, {"0.3.0"}}
+	for i := range want {
+		if strings.Join(got[i], ",") != strings.Join(want[i], ",") {
+			t.Errorf("dep %d: %v, want %v", i, got[i], want[i])
+		}
+	}
+	if f.calls["r.example/charts/dep-a"] != 1 {
+		t.Fatalf("calls = %v, want 1", f.calls)
 	}
 }
 

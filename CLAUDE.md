@@ -40,13 +40,13 @@ Flow: `cmd/forge` → `internal/cli` (cobra, flags, exit codes) → `internal/en
 |---|---|
 | `chartmeta` | Load `Chart.yaml`/`Chart.lock` via Helm v4 SDK (`pkg/chart/v2`), write `Chart.lock` |
 | `lockdigest` | Re-implementation of Helm's lock digest (Helm's is in an unimportable `internal/` pkg) |
-| `resolve` | Semver range → exact version via OCI `tags/list`, chart-repo `index.yaml`, or the local `file://` chart (Masterminds/semver, same as Helm) |
+| `resolve` | Semver range → exact version via OCI `tags/list`, chart-repo `index.yaml`, or the local `file://` chart (Masterminds/semver, same as Helm); `Available`/`Pick`/`Newest` for `dep outdated` |
 | `registry` | oras-go based OCI client: auth, one shared token cache; `registry.HTTP` = the run's shared HTTP/2 clients, global/per-host limits, retries |
 | `chartrepo` | Classic chart repos: index.yaml parsed like Helm's `pkg/repo/v1` (copied, not imported — it drags in Helm's getter/plugin stack), chart URLs, basic auth/TLS |
 | `repoconfig` | Helm's `repositories.yaml`: `@name`/`alias:name` → URL, credentials, TLS |
 | `par` | `ByHost`: first request per host runs alone so the 401 challenge is answered once, then the rest fan out |
 | `fetch` | Parallel scheduler, singleflight by digest, streams blob → sha256 → store |
-| `store` | CAS cache: `blobs/sha256/<hex>` (0444), `refs/<registry>/<repo>/<version>`, `tmp/` |
+| `store` | CAS cache: `blobs/sha256/<hex>` (0444), `refs/<registry>/<repo>/<version>`, `tmp/`; `Entries`/`GC` back `cache ls`/`cache gc` |
 | `materialize` | Place blobs into `charts/` via reflink → hardlink → copy (per-OS `reflink_*.go`), staging + swap |
 | `testutil/fakeregistry` | In-memory OCI registry for unit tests; records requests, injects faults (429, 5xx, digest mismatch…) |
 | `testutil/fakerepo` | In-memory chart repository for unit tests; request log (marks requests with credentials), basic auth, queued error statuses |
@@ -56,7 +56,9 @@ Invariants that span files:
 - **Helm is the oracle.** `charts/*.tgz` bytes, `Chart.lock` (except `generated:`) and `helm template` output must match real helm 3 and 4. `testdata/golden/` is produced by real helm; a mismatch is a forge bug, don't edit goldens by hand — rerun `make golden`.
 - **`charts/` is atomic.** Archives go to `<chart>/.forge-staging/` (at chart root, not in `charts/` — helm would load it as a subchart) and are swapped in only if *every* dependency succeeded. Stale-archive removal mirrors `helm dep build`.
 - **Store is lock-free multi-process safe:** write to `tmp/`, then atomic rename. Cached tag→digest refs are trusted unless `--refresh`.
-- **Request budget:** cold ≈ `2 × OCI charts + 1 per registry` + `1 × chart-repo charts + 1 index.yaml per repo`; `file://` = 0; warm = 0 requests. Integration tests assert this — changes to fetch/auth ordering can break them.
+- A cache hit touches the ref file (`Store.Touch`); its mtime is "last used", which `cache gc` evicts by (LRU, `--older-than`, `--max-size`). GC never removes anything used/written within `--grace` (1h) and takes no locks; a run that loses a blob sees a cache miss. `cache gc` without `--older-than`/`--max-size` is a usage error.
+- **Request budget:** cold ≈ `2 × OCI charts + 1 per registry` + `1 × chart-repo charts + 1 index.yaml per repo`; `file://` = 0; warm = 0 requests. `dep tree`/`dep why`/`cache ls`/`cache gc` = 0; `dep outdated` = 1 `tags/list` per OCI repo (+1 auth per registry) + 1 `index.yaml` per chart repo. Integration tests assert this — changes to fetch/auth ordering can break them.
+- `dep tree`/`why`/`outdated` (`engine.Inspect`/`Outdated`) cover top-level dependencies only. They reuse `prepare` (so `@name` → URL) and match lock entries by index when the lock is in sync, else by name+repository. `outdated` never writes anything; `--fail-if-outdated` exits 1 (`cli.OutdatedError`, JSON code `outdated`).
 - `dep build` with no `Chart.lock` behaves like `dep update` (Helm behaviour); a digest mismatch fails with "run 'forge dep update'".
 - `engine.prepare` validates every repository before any network call and rewrites `@name` to its URL (Helm hashes and locks the URL). No-repository deps, other schemes and `apiVersion: v1` charts are unsupported.
 - Deliberate difference from Helm: `dep build` accepts chart-repo URLs never `helm repo add`-ed (fetched anonymously).

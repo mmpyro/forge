@@ -193,9 +193,6 @@ func (s *Store) PutRef(repo, version string, ref Ref) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
-	}
 	tmp, err := s.writeTemp(func(w io.Writer) error {
 		_, err := w.Write(b)
 		return err
@@ -203,11 +200,19 @@ func (s *Store) PutRef(repo, version string, ref Ref) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, p); err != nil {
-		os.Remove(tmp)
-		return err
+	// A concurrent GC may prune the (empty) directory between MkdirAll and
+	// Rename; recreate it and try again.
+	for attempt := 0; ; attempt++ {
+		if err = os.MkdirAll(filepath.Dir(p), 0o755); err == nil {
+			if err = os.Rename(tmp, p); err == nil {
+				return nil
+			}
+		}
+		if attempt == 2 || !errors.Is(err, os.ErrNotExist) {
+			os.Remove(tmp)
+			return err
+		}
 	}
-	return nil
 }
 
 func (s *Store) refPath(repo, version string) (string, error) {

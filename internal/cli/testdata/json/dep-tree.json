@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "command": "dep tree",
+  "chart": "CHART",
+  "success": true,
+  "chartName": "app",
+  "chartVersion": "0.1.0",
+  "hasLock": true,
+  "lockInSync": true,
+  "dependencies": [
+    {
+      "name": "dep-a",
+      "alias": "cache",
+      "constraint": "^1.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "condition": "cache.enabled",
+      "locked": "1.0.0",
+      "state": "cached",
+      "digest": "sha256:bf3523ffdc9a1c2e2bb1dfb2f12054433d2d4f1e0e0a8e29512d21c1c9ba0c83",
+      "sizeBytes": 2071,
+      "fetchedAt": "TIME",
+      "lastUsed": "TIME",
+      "blobPath": "BLOB",
+      "fileName": "dep-a-1.0.0.tgz",
+      "inCharts": true
+    },
+    {
+      "name": "dep-b",
+      "constraint": "2.0.0",
+      "repository": "oci://REGISTRY/charts",
+      "locked": "2.0.0",
+      "state": "cached",
+      "digest": "sha256:a4c5dc75bdcb2421095c5c8dd9cdf2fbec75e9f2625ac14d741f79cd7a5317d3",
+      "sizeBytes": 2071,
+      "fetchedAt": "TIME",
+      "lastUsed": "TIME",
+      "blobPath": "BLOB",
+      "fileName": "dep-b-2.0.0.tgz",
+      "inCharts": true
+    }
+  ]
+}

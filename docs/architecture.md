@@ -65,16 +65,16 @@ No lock at all → run `update`.
 | Package | Role |
 |---|---|
 | `cli` | cobra commands, flags, exit codes (`usageError` → 2), text and `-o json` output (`output.go`) |
-| `engine` | `Build` / `Update` orchestration; `Summary` with one `Dep` (status, digest, size, placement, problem) per dependency; `DependencyError` |
+| `engine` | `Build` / `Update` orchestration; `Summary` with one `Dep` (status, digest, size, placement, problem) per dependency; `DependencyError`. `Inspect` (offline, for `dep tree` / `dep why`) and `Outdated` (`dep outdated`) |
 | `chartmeta` | Load `Chart.yaml`/`Chart.lock` via Helm v4 SDK, write `Chart.lock` |
 | `lockdigest` | Re-implementation of Helm's lock digest (Helm's is in an unimportable `internal/` package) |
-| `resolve` | Semver constraint → exact version via OCI `tags/list`, `index.yaml` or the local `file://` chart |
+| `resolve` | Semver constraint → exact version via OCI `tags/list`, `index.yaml` or the local `file://` chart; `Available` / `Pick` / `Newest` for `dep outdated` |
 | `registry` | oras-go client: credentials, shared token cache, error classification (`Classify` → `Problem` with a stable code); `registry.HTTP`: the run's HTTP/2 clients, limits, retries and per-host request counts |
 | `chartrepo` | Classic chart repositories: `index.yaml` (parsed like Helm's `repo` package), archive URLs, credentials and TLS per repository |
 | `repoconfig` | Helm's `repositories.yaml`: `@name` resolution, credentials, TLS config |
 | `par` | `ByHost`: first request per host alone, then the rest in parallel |
 | `fetch` | Parallel scheduler, dedupe by repo:version and by digest/URL, stream blob → store |
-| `store` | Content-addressed cache |
+| `store` | Content-addressed cache; `Entries` and LRU `GC` for `cache ls` / `cache gc` |
 | `materialize` | Place blobs into `charts/` via reflink → hardlink → copy, staging + swap |
 | `testutil/fakeregistry` | In-memory OCI registry for unit tests, with request log and fault injection |
 | `testutil/fakerepo` | In-memory chart repository for unit tests, with request log, basic auth and faults |
@@ -129,6 +129,8 @@ sequenceDiagram
 | Warm `dep build` | `0` |
 | `dep update` | adds one `tags/list` per OCI repository that has a range constraint, and one `index.yaml` per chart repository |
 | `file://` | `0` — packaged locally every run |
+| `dep tree`, `dep why`, `cache ls`, `cache gc` | `0` — local files and the cache only |
+| `dep outdated` | one `tags/list` per OCI repository (exact versions included) + `1 per registry` auth round, one `index.yaml` per chart repository; nothing is downloaded |
 
 The integration tests assert these numbers through a counting proxy. Changing
 fetch or auth ordering can break them.
@@ -213,6 +215,31 @@ $HELM_FORGE_CACHE/
 - `Open` sweeps `tmp/` files older than an hour (left by crashed runs).
 - A cached `refs/` entry is trusted unless `--refresh`. That is what makes a
   warm build zero requests.
+- A cache hit touches its `refs/` file (`Store.Touch`, best effort: a
+  read-only cache still serves hits). The file's mtime is the chart's
+  "last used" time, which `cache ls` shows and `cache gc` evicts by.
+
+### Garbage collection
+
+`forge cache gc` (`Store.GC`) works on the ref files' mtimes and the blobs
+they point at:
+
+1. Refs that are unreadable or point at a missing blob are removed; so are
+   refs not used within `--older-than`.
+2. A blob's last use is the newest of the refs kept for it. Blobs no kept ref
+   points at are removed.
+3. While the kept blobs exceed `--max-size`, the least recently used blob and
+   all its refs go.
+4. Nothing used or written within `--grace` (default 1 h, like the `tmp/`
+   sweep) is removed. That covers a concurrent run between finding a blob in
+   the cache and placing it into `charts/`, and a blob whose ref is not
+   written yet.
+5. Empty directories under `refs/` are pruned. `PutRef` recreates a
+   directory it loses to that.
+
+GC takes no locks, like everything else in the store. A run that loses a blob
+anyway sees a cache miss and downloads it again. Freed bytes are blob sizes: a
+blob hardlinked into a `charts/` keeps its inode until that link is deleted.
 
 ### Atomic `charts/`
 

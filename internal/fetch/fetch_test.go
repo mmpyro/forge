@@ -112,6 +112,30 @@ func TestWarmFetchMakesNoRequests(t *testing.T) {
 	}
 }
 
+func TestCacheHitMarksRefUsed(t *testing.T) {
+	e := newEnv(t)
+	e.push(t, "dep-a", "1.0.0")
+	items := []fetch.Item{e.item("dep-a", "1.0.0")}
+	mustOK(t, e.f.Fetch(context.Background(), items))
+	es, _ := e.st.Entries()
+	if len(es) != 1 {
+		t.Fatalf("entries = %+v", es)
+	}
+	refFile := filepath.Join(e.st.Root(), "refs", filepath.FromSlash(es[0].Key), es[0].Version)
+	past := time.Now().Add(-48 * time.Hour)
+	_ = os.Chtimes(refFile, past, past)
+
+	e.reg.Reset()
+	mustOK(t, e.f.Fetch(context.Background(), items))
+	if reqs := e.reg.Requests(); len(reqs) != 0 {
+		t.Fatalf("warm fetch made requests: %v", reqs)
+	}
+	es, _ = e.st.Entries()
+	if !es[0].LastUsed.After(past.Add(47 * time.Hour)) {
+		t.Fatalf("last used = %s, want about now", es[0].LastUsed)
+	}
+}
+
 func TestRefreshRechecksManifestsButReusesBlobs(t *testing.T) {
 	e := newEnv(t)
 	e.push(t, "dep-a", "1.0.0")

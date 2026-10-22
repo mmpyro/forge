@@ -119,6 +119,7 @@ func (f *Fetcher) Fetch(ctx context.Context, items []Item) []Result {
 		if !f.Refresh {
 			start := time.Now()
 			if ref, ok := f.Store.GetRef(j.key, j.version); ok && f.Store.HasBlob(ref.Layer) && (j.oci || ref.File != "") {
+				f.Store.Touch(j.key, j.version)
 				set(j, Result{BlobPath: f.Store.BlobPath(ref.Layer), FileName: ref.File, Cached: true, Digest: ref.Layer, Size: ref.Size, Duration: time.Since(start)})
 				continue
 			}
