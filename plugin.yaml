@@ -3,7 +3,7 @@
 # `version` must equal the release tag: the install hook downloads the binary of this version,
 # and the release workflow refuses to tag a mismatch.
 name: forge
-version: 2.0.0
+version: 2.1.0
 usage: Fast parallel `dependency build/update` for OCI, chart repository and file:// dependencies
 description: |-
   forge replaces `helm dependency build` / `helm dependency update` for charts
