@@ -33,73 +33,84 @@ flowchart TD
     click LOCK href "#helm-is-the-oracle" "Chart.lock written byte-for-byte as Helm would"
 ```
 
-On the docs site, hover a box for its role and click it to jump to the
-section that explains it.
+On the docs site, hover over a box to see its role. Click a box to go to the
+section about it.
 
 `dep update`:
 
-1. `chartmeta.Load` reads the chart with Helm's own loader (so dependency
-   fields are sanitised exactly as Helm does before hashing). `apiVersion: v1`
-   is rejected.
-2. `prepare` checks every repository before any network call: `oci://`,
-   `http(s)://`, `file://` (directory must exist) and `@name`/`alias:name`
-   (must be in `repositories.yaml`; replaced by its URL, which is what Helm
-   hashes and locks). Anything else is rejected.
-3. `resolve.Resolve` turns constraints into versions:
-   - OCI: exact versions skip the registry; each range repository's
-     `tags/list` is fetched once.
-   - Chart repositories: always from `index.yaml` (once per repository per
-     run), so the lock gets the index's spelling, as in Helm.
-   - `file://`: the local chart's version, if it satisfies the constraint.
-4. `install` fetches every remote dependency and packages every `file://` one
-   (see below). Any failure → stop, `charts/` untouched.
-5. `lockdigest.Compute` hashes `[Chart.yaml deps, locked deps]`. If it equals
-   the existing lock digest, `Chart.lock` is left alone; otherwise it is
-   written byte-for-byte as Helm would.
+1. `chartmeta.Load` reads the chart with the loader of Helm. Thus forge cleans
+   the dependency fields exactly as Helm does before it calculates the hash.
+   forge rejects `apiVersion: v1`.
+2. `prepare` checks all repositories before the first network call. It
+   accepts these types:
+   - `oci://`
+   - `http(s)://`
+   - `file://` (the directory must exist)
+   - `@name` and `alias:name` (the name must be in `repositories.yaml`).
+     `prepare` replaces the name with its URL, because Helm hashes and locks
+     the URL.
 
-`dep build`: load → `prepare` → verify the lock digest → `install`.
-No lock at all → run `update`.
+   `prepare` rejects all other types.
+3. `resolve.Resolve` changes constraints into versions:
+   - OCI: for exact versions, forge does not ask the registry. For a range,
+     forge fetches the `tags/list` of the repository one time.
+   - Chart repositories: forge always uses `index.yaml` (one time for each
+     repository in a run). Thus the lock gets the spelling of the index, as
+     in Helm.
+   - `file://`: forge uses the version of the local chart, if it satisfies
+     the constraint.
+4. `install` fetches all remote dependencies and packages all `file://`
+   dependencies (see below). If one of them fails, the run stops and
+   `charts/` does not change.
+5. `lockdigest.Compute` calculates the hash of
+   `[Chart.yaml deps, locked deps]`. If it is equal to the digest of the
+   current lock, forge does not change `Chart.lock`. If not, forge writes
+   `Chart.lock` with the same bytes as Helm.
+
+`dep build` does these steps: load, `prepare`, verify the lock digest,
+`install`. If there is no lock, it runs `update`.
 
 ## Packages
 
 | Package | Role |
 |---|---|
 | `cli` | cobra commands, flags, exit codes (`usageError` → 2), text and `-o json` output (`output.go`) |
-| `engine` | `Build` / `Update` orchestration; `Summary` with one `Dep` (status, digest, size, placement, problem) per dependency; `DependencyError`. `Inspect` (offline, for `dep tree` / `dep why`) and `Outdated` (`dep outdated`) |
-| `chartmeta` | Load `Chart.yaml`/`Chart.lock` via Helm v4 SDK, write `Chart.lock` |
-| `lockdigest` | Re-implementation of Helm's lock digest (Helm's is in an unimportable `internal/` package) |
-| `resolve` | Semver constraint → exact version via OCI `tags/list`, `index.yaml` or the local `file://` chart; `Available` / `Pick` / `Newest` for `dep outdated` |
-| `registry` | oras-go client: credentials, shared token cache, error classification (`Classify` → `Problem` with a stable code); `registry.HTTP`: the run's HTTP/2 clients, limits, retries and per-host request counts |
-| `chartrepo` | Classic chart repositories: `index.yaml` (parsed like Helm's `repo` package), archive URLs, credentials and TLS per repository |
+| `engine` | `Build` / `Update` orchestration. `Summary` with one `Dep` (status, digest, size, placement, problem) for each dependency. `DependencyError`. `Inspect` (offline, for `dep tree` / `dep why`) and `Outdated` (`dep outdated`) |
+| `chartmeta` | Load `Chart.yaml`/`Chart.lock` with the Helm v4 SDK, write `Chart.lock` |
+| `lockdigest` | A copy of Helm's lock digest code. Helm keeps it in an `internal/` package that forge cannot import |
+| `resolve` | Semver constraint → exact version from OCI `tags/list`, `index.yaml` or the local `file://` chart. `Available` / `Pick` / `Newest` for `dep outdated` |
+| `registry` | oras-go client: credentials, shared token cache, error classification (`Classify` → `Problem` with a stable code). `registry.HTTP`: the HTTP/2 clients of the run, limits, retries and request counts for each host |
+| `chartrepo` | Classic chart repositories: `index.yaml` (parsed as Helm's `repo` package parses it), archive URLs, credentials and TLS for each repository |
 | `repoconfig` | Helm's `repositories.yaml`: `@name` resolution, credentials, TLS config |
-| `par` | `ByHost`: first request per host alone, then the rest in parallel |
-| `fetch` | Parallel scheduler, dedupe by repo:version and by digest/URL, stream blob → store |
-| `store` | Content-addressed cache; `Entries` and LRU `GC` for `cache ls` / `cache gc` |
-| `materialize` | Place blobs into `charts/` via reflink → hardlink → copy, staging + swap |
-| `testutil/fakeregistry` | In-memory OCI registry for unit tests, with request log and fault injection |
-| `testutil/fakerepo` | In-memory chart repository for unit tests, with request log, basic auth and faults |
+| `par` | `ByHost`: the first request for each host runs alone, then the other requests run in parallel |
+| `fetch` | Parallel scheduler, removes duplicates by repo:version and by digest/URL, streams blob → store |
+| `store` | Content-addressed cache. `Entries` and LRU `GC` for `cache ls` / `cache gc` |
+| `materialize` | Puts blobs into `charts/` with reflink → hardlink → copy, staging + swap |
+| `testutil/fakeregistry` | In-memory OCI registry for unit tests, with a request log and fault injection |
+| `testutil/fakerepo` | In-memory chart repository for unit tests, with a request log, basic auth and faults |
 
 ## Why it is fast
 
 ### One registry client per run
 
-`registry.NewHTTP` builds the HTTP clients for the whole process, and
-`registry.New` one oras `auth.Client` on top of them. All requests share
-connections (HTTP/2 when offered), the token cache and the concurrency
-limits. Chart repositories use the same clients and limits; one with its own
-CA or client certificate gets a separate connection pool but the same
-request budget.
+`registry.NewHTTP` makes the HTTP clients for the full process.
+`registry.New` makes one oras `auth.Client` on top of them. All requests share
+the connections (HTTP/2 when the server offers it), the token cache and the
+concurrency limits. Chart repositories use the same clients and limits. A
+chart repository with its own CA or client certificate gets a separate
+connection pool, but it has the same request budget.
 
 ### One auth handshake per registry
 
-Firing 40 requests at a cold registry would trigger 40 `401` challenges and
-40 token requests. Two things prevent that:
+If forge sent 40 requests to a cold registry, the registry would send 40 `401`
+challenges, and forge would need 40 token requests. Two mechanisms prevent
+this:
 
-- `registry.WithPullScopes` puts *every* repository's pull scope into the
-  first token request for each host, so one token covers them all.
-- `par.ByHost` runs the first item of each host alone. Its challenge is
-  answered and the token cached; then the rest of that host's items fan out.
-  Leaders of different hosts run concurrently.
+- `registry.WithPullScopes` puts the pull scope of *all* repositories into the
+  first token request for each host. Thus one token covers all repositories.
+- `par.ByHost` runs the first item of each host alone. forge answers its
+  challenge and caches the token. Then the other items of that host run in
+  parallel. The first items of different hosts run at the same time.
 
 ```mermaid
 sequenceDiagram
@@ -125,76 +136,86 @@ sequenceDiagram
 
 | Run | Requests |
 |---|---|
-| Cold `dep build` | ≈ `2 × unique OCI charts + 1 per registry` (manifest + blob per chart, one auth round), plus `1 × unique chart-repository charts + 1 index.yaml per repository` |
+| Cold `dep build` | ≈ `2 × unique OCI charts + 1 per registry` (manifest + blob for each chart, one auth round), plus `1 × unique chart-repository charts + 1 index.yaml per repository` |
 | Warm `dep build` | `0` |
-| `dep update` | adds one `tags/list` per OCI repository that has a range constraint, and one `index.yaml` per chart repository |
-| `file://` | `0` — packaged locally every run |
-| `dep tree`, `dep why`, `cache ls`, `cache gc` | `0` — local files and the cache only |
-| `dep outdated` | one `tags/list` per OCI repository (exact versions included) + `1 per registry` auth round, one `index.yaml` per chart repository; nothing is downloaded |
+| `dep update` | One more `tags/list` for each OCI repository that has a range constraint, and one `index.yaml` for each chart repository |
+| `file://` | `0`. forge packages the chart locally on each run |
+| `dep tree`, `dep why`, `cache ls`, `cache gc` | `0`. These commands use only local files and the cache |
+| `dep outdated` | One `tags/list` for each OCI repository (exact versions included) + `1 per registry` auth round, and one `index.yaml` for each chart repository. It downloads no charts |
 
-The integration tests assert these numbers through a counting proxy. Changing
-fetch or auth ordering can break them.
+The integration tests use a counting proxy to check these numbers. A change to
+the order of fetch or auth steps can break them.
 
 ### Deduplication
 
-- Items with the same `repo:version` (e.g. three aliases of one chart) become
-  one job.
-- Jobs sharing a layer digest download it once (`singleflight` by digest).
-- A blob already in the store is never downloaded again, whichever chart or
-  project asked for it first.
+- Items with the same `repo:version` (for example, three aliases of one chart)
+  become one job.
+- If jobs share a layer digest, forge downloads it one time (`singleflight`
+  by digest).
+- forge never downloads a blob again if it is already in the store. It does
+  not matter which chart or project asked for it first.
 
 ### Limits and retries
 
-`limitTransport` holds a global slot and a per-host slot per request **until
-the response body is closed** — the transfer is still running after
-`RoundTrip` returns. It takes the host slot first so a request queued on a
-busy host does not block a global slot another host could use. Per-host
-counting also means blob redirects (ECR → S3, GHCR → pkg-containers) get
-their own budget.
+`limitTransport` holds a global slot and a host slot for each request **until
+the response body is closed**. The transfer continues after `RoundTrip`
+returns. `limitTransport` takes the host slot first. Thus a request that waits
+for a busy host does not hold a global slot that a different host could use.
+Because forge counts slots for each host, blob redirects (ECR → S3, GHCR →
+pkg-containers) get their own budget.
 
-Retries wrap the limiter, so a retry waits for a free slot like any other
-request. Policy: `408`, `429`, `5xx`, network errors; 3 retries;
-200 ms × 2ⁿ with 20 % jitter, or `Retry-After` up to 30 s.
+The retry layer is outside the limiter. Thus a retry waits for a free slot,
+as all other requests do. The retry policy is:
+
+- Retry on `408`, `429`, `5xx` and network errors.
+- Retry up to 3 times.
+- Wait 200 ms × 2ⁿ with 20 % jitter, or use `Retry-After` up to 30 s.
 
 ## The run report
 
-Every run builds an `engine.Summary`. The text output prints its counts; `-o json`
-(`cli/output.go`) prints all of it. It is filled even when the run fails, so a
-failed run still says what happened to each dependency.
+Each run makes an `engine.Summary`. The text output prints its counts.
+`-o json` (`cli/output.go`) prints all of it. forge fills the summary also
+when the run fails. Thus a failed run still tells what happened to each
+dependency.
 
-- **Per dependency** (`Summary.Deps`, in `Chart.yaml` order): status
-  (`cached`, `downloaded`, `local`, `failed`, `skipped`), locked version,
-  digest and size (from `fetch.Result`), how it was placed in `charts/`
-  (`materialize.Stage.Placement`) and how long it took.
-- **Errors are classified, not just printed.** `registry.Classify` maps OCI
-  errors, and `engine.repoProblem` maps chart repository errors, to a
-  `registry.Problem`: a stable `code`, the HTTP status, a message and a hint.
-  The text reason in `DependencyError` is derived from the same `Problem`, so
-  text and JSON can't disagree.
-- **Failures before fetching are attributed too.** `resolve.NoMatchError` and
-  `engine.UnsupportedError` are typed, so the dependencies they name are
-  `failed` and the rest `skipped`. Other early failures (lock out of sync,
-  unknown `@name`, timeout) go to the top-level `error`.
-- **Requests per host.** `registry.HTTP` wraps every client in two counting
-  transports: one below the retry layer (every attempt, and `401` challenges)
-  and one above it (logical requests); retries = attempts − logical. OCI
-  registries and chart repositories share one `HTTP`, so the counts cover
-  both. The integration tests check that these counts equal what the counting
-  proxies saw.
+- **For each dependency** (`Summary.Deps`, in `Chart.yaml` order): the status
+  (`cached`, `downloaded`, `local`, `failed`, `skipped`), the locked version,
+  the digest and size (from `fetch.Result`), the placement method in
+  `charts/` (`materialize.Stage.Placement`) and the duration.
+- **forge classifies errors.** `registry.Classify` maps OCI errors to a
+  `registry.Problem`. `engine.repoProblem` maps chart repository errors to a
+  `registry.Problem`. A `Problem` has a stable `code`, the HTTP status, a
+  message and a hint. The text reason in `DependencyError` comes from the same
+  `Problem`. Thus the text and the JSON always agree.
+- **forge also assigns failures that occur before the fetch.**
+  `resolve.NoMatchError` and `engine.UnsupportedError` are typed errors. The
+  dependencies that they name get `failed`, and the other dependencies get
+  `skipped`. Other early failures (lock out of sync, unknown `@name`, timeout)
+  go to the top-level `error`.
+- **Requests for each host.** `registry.HTTP` wraps each client in two
+  counting transports. One is below the retry layer and counts each attempt
+  and each `401` challenge. The other is above it and counts logical requests.
+  Retries = attempts − logical requests. OCI registries and chart
+  repositories share one `HTTP`, so the counts include both. The integration
+  tests check that these counts are equal to the counts of the counting
+  proxies.
 
 ## Distribution: the Helm plugin
 
-forge ships as a Helm plugin (`plugin.yaml`, legacy format so Helm ≥ 3.18 and
-Helm 4 both load it). `helm plugin install <repo> --version vX.Y.Z` clones the
-repository at that tag; the platform install hook
-(`scripts/install-plugin.sh` or `.ps1`) then downloads the release binary
-named by `plugin.yaml`'s `version` and checks it against `checksums.txt`.
-The release workflow refuses a tag that differs from that `version`.
+forge is a Helm plugin (`plugin.yaml`). It uses the legacy format, so Helm
+≥ 3.18 and Helm 4 can both load it.
+`helm plugin install <repo> --version vX.Y.Z` clones the repository at that
+tag. Then the platform install hook
+(`scripts/install-plugin.sh` or `.ps1`) downloads the release binary that the
+`version` in `plugin.yaml` names. The hook checks the binary against
+`checksums.txt`. The release workflow rejects a tag that is different from
+that `version`.
 
-When Helm runs a plugin it sets `HELM_PLUGIN_DIR`, `HELM_CACHE_HOME`,
-`HELM_REGISTRY_CONFIG`, `HELM_REPOSITORY_CONFIG` and friends. forge reads
-these, so `helm forge` uses Helm's credentials and repositories and keeps its
-cache in `$HELM_CACHE_HOME/forge` (`store.DefaultRoot`).
+When Helm runs a plugin, it sets `HELM_PLUGIN_DIR`, `HELM_CACHE_HOME`,
+`HELM_REGISTRY_CONFIG`, `HELM_REPOSITORY_CONFIG` and similar variables. forge
+reads these variables. Thus `helm forge` uses the credentials and repositories
+of Helm, and keeps its cache in `$HELM_CACHE_HOME/forge`
+(`store.DefaultRoot`).
 
 ## Why it is safe
 
@@ -208,81 +229,96 @@ $HELM_FORGE_CACHE/
   tmp/                               in-flight writes
 ```
 
-- Every write goes to `tmp/` then is `rename`d into place, so concurrent forge
-  processes share one cache without locks.
-- Blobs are hashed while streaming; a mismatch is discarded and downloaded
-  once more before failing.
-- `Open` sweeps `tmp/` files older than an hour (left by crashed runs).
-- A cached `refs/` entry is trusted unless `--refresh`. That is what makes a
-  warm build zero requests.
-- A cache hit touches its `refs/` file (`Store.Touch`, best effort: a
-  read-only cache still serves hits). The file's mtime is the chart's
-  "last used" time, which `cache ls` shows and `cache gc` evicts by.
+- forge writes each file to `tmp/` first. Then it uses `rename` to move the
+  file into place. Thus concurrent forge processes share one cache without
+  locks.
+- forge calculates the hash of each blob while it streams. If the hash does
+  not match, forge discards the blob and downloads it one more time. If it
+  fails again, the dependency fails.
+- `Open` removes `tmp/` files that are older than one hour. Crashed runs leave
+  these files.
+- forge trusts a cached `refs/` entry, unless you use `--refresh`. Because of
+  this, a warm build sends zero requests.
+- A cache hit touches its `refs/` file (`Store.Touch`). This is best effort: a
+  read-only cache still serves hits. The mtime of the file is the "last used"
+  time of the chart. `cache ls` shows this time, and `cache gc` uses it to
+  select charts to remove.
 
 ### Garbage collection
 
-`forge cache gc` (`Store.GC`) works on the ref files' mtimes and the blobs
-they point at:
+`forge cache gc` (`Store.GC`) uses the mtimes of the ref files and the blobs
+that they point to:
 
-1. Refs that are unreadable or point at a missing blob are removed; so are
-   refs not used within `--older-than`.
-2. A blob's last use is the newest of the refs kept for it. Blobs no kept ref
-   points at are removed.
-3. While the kept blobs exceed `--max-size`, the least recently used blob and
-   all its refs go.
-4. Nothing used or written within `--grace` (default 1 h, like the `tmp/`
-   sweep) is removed. That covers a concurrent run between finding a blob in
-   the cache and placing it into `charts/`, and a blob whose ref is not
-   written yet.
-5. Empty directories under `refs/` are pruned. `PutRef` recreates a
-   directory it loses to that.
+1. It removes refs that it cannot read or that point to a missing blob. It
+   also removes refs that were not used within `--older-than`.
+2. The last use of a blob is the newest last use of the refs that it keeps
+   for that blob. It removes blobs that no kept ref points to.
+3. While the kept blobs are larger than `--max-size`, it removes the least
+   recently used blob and all of its refs.
+4. It does not remove items that were used or written within `--grace`
+   (default 1 h, the same as the `tmp/` cleanup). This protects a concurrent
+   run between the time it finds a blob in the cache and the time it puts the
+   blob into `charts/`. It also protects a blob whose ref is not written yet.
+5. It removes empty directories under `refs/`. If `PutRef` loses a directory
+   because of this, it makes the directory again.
 
-GC takes no locks, like everything else in the store. A run that loses a blob
-anyway sees a cache miss and downloads it again. Freed bytes are blob sizes: a
-blob hardlinked into a `charts/` keeps its inode until that link is deleted.
+GC takes no locks, as the other store operations do. If a run loses a blob
+anyway, it gets a cache miss and downloads the blob again. The freed bytes are
+the blob sizes. A blob that is hardlinked into a `charts/` directory keeps its
+inode until you delete that link.
 
 ### Atomic `charts/`
 
-1. Archives are placed into `<chart>/.forge-staging/`. It sits at the chart
-   root, not in `charts/`, because Helm would load a leftover directory in
-   `charts/` as a broken subchart.
-2. Only if **every** dependency succeeded, staged files are renamed into
-   `charts/` and stale chart archives are removed (non-chart files and
-   directories are kept, as Helm does).
-3. On any error the staging directory is removed and `charts/` is untouched.
-   A staging directory left by a killed run is wiped at the start of the next.
+1. forge puts the archives into `<chart>/.forge-staging/`. This directory is
+   at the chart root, not in `charts/`. If a directory stayed in `charts/`,
+   Helm would load it as a broken subchart.
+2. Only if **all** dependencies succeed, forge renames the staged files into
+   `charts/`. It also removes stale chart archives. As Helm does, it keeps
+   files that are not charts, and directories.
+3. If an error occurs, forge removes the staging directory and `charts/` does
+   not change. If a killed run leaves a staging directory, the next run
+   deletes it at the start.
 
 ### Placing files
 
-`place` tries, in order:
+`place` tries these methods in this order:
 
-1. **reflink** — copy-on-write clone (`clonefile` on macOS/APFS,
-   `FICLONE` on Linux btrfs/XFS). Independent file, no extra disk.
-2. **hardlink** — shares the read-only cache inode. The archive in `charts/`
-   is `0444`.
-3. **copy** — plain `0644` copy, e.g. across filesystems.
+1. **reflink**: a copy-on-write clone (`clonefile` on macOS/APFS, `FICLONE`
+   on Linux btrfs/XFS). The file is independent and uses no more disk space.
+2. **hardlink**: the file shares the read-only inode of the cache. The
+   archive in `charts/` is `0444`.
+3. **copy**: a usual `0644` copy (for example, across file systems).
 
 ## Helm is the oracle
 
-forge's output must match real Helm, not a spec of Helm:
+The output of forge must match real Helm, not a specification of Helm:
 
-- `testdata/golden/` holds `Chart.lock` files produced by real
-  `helm dependency update`. A mismatch is a forge bug — regenerate with
-  `make golden`, never edit by hand.
-- `make compat` runs every fixture through Helm 3, Helm 4 and forge and diffs
-  `charts/` listings, archive sha256, `Chart.lock` (minus `generated:`) and
-  `helm template` output.
-- Resolver details copied from Helm: only strict semver tags count, `_` in a
-  tag is read as `+`, exact versions are not looked up, highest match wins.
-- Chart repository details copied from Helm: `index.yaml` is parsed strictly,
-  invalid entries are dropped and versions sorted as Helm's `repo` package
-  does; entries without URLs are skipped; archive URLs resolve relative to the
-  repository URL; the archive keeps its URL's file name; credentials go only
-  to the repository's scheme and host unless `pass_credentials_all`.
-- `file://` charts are archived with Helm's `chartutil.Save`, so the tar
-  stream matches Helm 4's for the same directory (tar mtimes come from the
-  files). The gzip bytes can differ when forge and Helm were built with
-  different Go versions, and Helm 3 stamps entries with the current time, so
-  `make compat` compares these archives by member names and contents.
-- One deliberate difference: `helm dependency build` refuses chart repository
-  URLs that were never `helm repo add`-ed; forge fetches them anonymously.
+- `testdata/golden/` has `Chart.lock` files that real
+  `helm dependency update` made. A difference is a forge bug. To regenerate
+  the files, run `make golden`. Never edit them by hand.
+- `make compat` runs each fixture through Helm 3, Helm 4 and forge. It
+  compares the `charts/` listings, the archive sha256, `Chart.lock` (without
+  `generated:`) and the `helm template` output.
+- forge uses the same resolver rules as Helm:
+  - Only strict semver tags count.
+  - forge reads `_` in a tag as `+`.
+  - forge does not look up exact versions.
+  - The highest match wins.
+- forge uses the same chart repository rules as Helm:
+  - forge parses `index.yaml` strictly.
+  - It drops entries that are not valid and sorts versions as Helm's `repo`
+    package does.
+  - It skips entries without URLs.
+  - It resolves archive URLs relative to the repository URL.
+  - The archive keeps the file name of its URL.
+  - It sends credentials only to the scheme and host of the repository,
+    unless `pass_credentials_all` is set.
+- forge archives `file://` charts with Helm's `chartutil.Save`. Thus the tar
+  stream is the same as Helm 4's for the same directory (the tar mtimes come
+  from the files). The gzip bytes can be different when forge and Helm use
+  different Go versions. Also, Helm 3 writes the current time into the
+  entries. Thus `make compat` compares these archives by member names and
+  contents.
+- There is one intentional difference. `helm dependency build` rejects chart
+  repository URLs that you did not add with `helm repo add`. forge fetches
+  them with anonymous access.

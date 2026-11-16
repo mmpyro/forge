@@ -4,11 +4,11 @@
 
 ### Helm plugin (recommended)
 
-Needs Helm 3.18+ or Helm 4. Works on macOS, Linux and Windows (amd64/arm64).
-The install hook needs `curl` or `wget` and `sha256sum` or `shasum` (macOS and
-Linux), or PowerShell (Windows).
+You need Helm 3.18+ or Helm 4. The plugin works on macOS, Linux and Windows
+(amd64/arm64). On macOS and Linux, the install hook needs `curl` or `wget`,
+and `sha256sum` or `shasum`. On Windows, it needs PowerShell.
 
-**1. Install**, pinned to a release tag:
+**1. Install** a pinned release tag:
 
 === "Helm 4"
 
@@ -22,13 +22,17 @@ Linux), or PowerShell (Windows).
     helm plugin install https://github.com/mmpyro/forge --version v2.1.0
     ```
 
-Helm clones the repository at that tag, then runs the install hook
-(`scripts/install-plugin.sh`, or `install-plugin.ps1` on Windows). The hook:
+Helm clones the repository at that tag. Then it runs the install hook
+(`scripts/install-plugin.sh`, or `install-plugin.ps1` on Windows). The hook
+does these steps:
 
-1. reads `version` from `plugin.yaml`;
-2. downloads `forge-<os>-<arch>` and `checksums.txt` from that GitHub release;
-3. checks the binary's sha256 and aborts the install on a mismatch;
-4. places it in `$HELM_PLUGIN_DIR/bin/` and prints `forge: installed …`.
+1. It reads `version` from `plugin.yaml`.
+2. It downloads `forge-<os>-<arch>` and `checksums.txt` from that GitHub
+   release.
+3. It checks the sha256 of the binary. If the checksum does not match, the
+   install stops.
+4. It puts the binary in `$HELM_PLUGIN_DIR/bin/` and prints
+   `forge: installed …`.
 
 **2. Verify:**
 
@@ -38,7 +42,7 @@ helm forge --version
 helm forge cache path         # $HELM_CACHE_HOME/forge
 ```
 
-**3. Use** `helm forge` wherever you used `helm dependency`:
+**3. Use** `helm forge` in all places where you used `helm dependency`:
 
 ```sh
 helm forge dep update ./my-chart
@@ -49,48 +53,49 @@ helm template my-release ./my-chart
 Notes:
 
 - `helm forge …` takes the same commands and flags as `forge …`.
-- Helm 4 verifies plugin signatures by default and can't verify a git source,
-  so it needs `--verify=false`. Helm 3 has no such flag.
-- Always pass `--version`: without it Helm installs from `main`, whose
-  `plugin.yaml` may name a release that isn't published yet. Plugin installs
-  are available from v2.0.0.
-- Helm passes its settings to the plugin: `--registry-config` /
+- By default, Helm 4 verifies plugin signatures. It cannot verify a git
+  source, so it needs `--verify=false`. Helm 3 does not have this flag.
+- Always give `--version`. Without it, Helm installs from `main`. The
+  `plugin.yaml` on `main` can name a release that is not published yet. Plugin
+  installs are available from v2.0.0.
+- Helm gives its settings to the plugin. `--registry-config` /
   `HELM_REGISTRY_CONFIG` and `--repository-config` / `HELM_REPOSITORY_CONFIG`
-  work as with Helm itself, so `helm registry login` and `helm repo add`
-  credentials and `@name` repositories just work. The cache defaults to
-  `$HELM_CACHE_HOME/forge` (see [Environment](#environment)).
-- Set `HELM_FORGE_PLUGIN_URL` to download from a mirror of the GitHub releases
-  (it replaces `https://github.com/mmpyro/forge/releases/download`; the hook
-  appends `/v<version>/<asset>`). Useful behind a proxy or air-gapped:
+  work as they do in Helm. Thus credentials from `helm registry login` and
+  `helm repo add`, and `@name` repositories, work without more setup. The
+  default cache is `$HELM_CACHE_HOME/forge` (see [Environment](#environment)).
+- To download from a mirror of the GitHub releases, set
+  `HELM_FORGE_PLUGIN_URL`. Its value replaces
+  `https://github.com/mmpyro/forge/releases/download`, and the hook adds
+  `/v<version>/<asset>`. Use it behind a proxy or on an air-gapped network:
 
   ```sh
   HELM_FORGE_PLUGIN_URL=https://mirror.example.com/forge \
     helm plugin install https://github.com/mmpyro/forge --version v2.1.0
   ```
 
-**Upgrade or remove.** The plugin is pinned to the tag it was installed from,
-so move to another version by reinstalling:
+**Upgrade or remove.** The plugin stays at the tag that you installed. To
+change the version, install the plugin again:
 
 ```sh
 helm plugin uninstall forge
 helm plugin install https://github.com/mmpyro/forge --version vX.Y.Z   # + --verify=false on Helm 4
 ```
 
-The cache in `$HELM_CACHE_HOME/forge` survives reinstalls; remove it with
-`helm forge cache clean` before uninstalling if you want it gone.
+A reinstall keeps the cache in `$HELM_CACHE_HOME/forge`. To remove the cache,
+run `helm forge cache clean` before you uninstall the plugin.
 
 **Install troubleshooting:**
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Signature or verification error (Helm 4) | Helm 4 verifies signatures by default | Add `--verify=false` |
-| `forge: download failed: …/v<version>/forge-…` | Release not published, or no network access to GitHub | Pass `--version` of a published release; or set `HELM_FORGE_PLUGIN_URL` to a mirror |
-| `forge: checksum mismatch for …` | Corrupted download or a proxy rewriting it | Retry; check proxies. Nothing was installed |
-| `forge: unsupported OS` / `architecture` | Not macOS/Linux/Windows on amd64/arm64 | Build from source (below) |
-| `plugin already exists` | An earlier install is still there | `helm plugin uninstall forge` first |
-| Hook not run (Helm < 3.18) | `platformHooks` needs Helm 3.18+ | Upgrade Helm, or use the standalone binary |
+| Signature or verification error (Helm 4) | By default, Helm 4 verifies signatures | Add `--verify=false` |
+| `forge: download failed: …/v<version>/forge-…` | The release is not published, or there is no network access to GitHub | Give the `--version` of a published release, or set `HELM_FORGE_PLUGIN_URL` to a mirror |
+| `forge: checksum mismatch for …` | The download is corrupt, or a proxy changed it | Try again and examine your proxies. The hook did not install anything |
+| `forge: unsupported OS` / `architecture` | The system is not macOS, Linux or Windows on amd64/arm64 | Build from source (see below) |
+| `plugin already exists` | An earlier install is still there | Run `helm plugin uninstall forge` first |
+| The hook does not run (Helm < 3.18) | `platformHooks` needs Helm 3.18+ | Upgrade Helm, or use the standalone binary |
 
-**Moving from Homebrew.** The Homebrew tap is discontinued. Remove it and
+**Move from Homebrew.** The Homebrew tap is discontinued. Remove it and
 install the plugin:
 
 ```sh
@@ -99,9 +104,9 @@ brew uninstall helm-forge && brew untap mmpyro/forge
 
 ### Prebuilt binaries
 
-Prebuilt binaries and `checksums.txt` are attached to every
-[GitHub release](https://github.com/mmpyro/forge/releases). The links
-below point at [v2.1.0](https://github.com/mmpyro/forge/releases/tag/v2.1.0)
+Each [GitHub release](https://github.com/mmpyro/forge/releases) has prebuilt
+binaries and a `checksums.txt` file. The links below go to
+[v2.1.0](https://github.com/mmpyro/forge/releases/tag/v2.1.0)
 ([`checksums.txt`](https://github.com/mmpyro/forge/releases/download/v2.1.0/checksums.txt)).
 
 | Platform | Asset | Download |
@@ -125,7 +130,7 @@ below point at [v2.1.0](https://github.com/mmpyro/forge/releases/tag/v2.1.0)
 
 === "Binary (Windows)"
 
-    Download the `.exe`, rename it to `forge.exe` and put it in a
+    Download the `.exe` file. Rename it to `forge.exe` and put it in a
     directory on your `PATH`.
 
 ### From source
@@ -137,45 +142,50 @@ make build            # → bin/forge, version from `git describe`
 bin/forge --version
 ```
 
-Or without the Makefile:
+You can also build without the Makefile:
 
 ```sh
 go build -o bin/forge ./cmd/forge
 ```
 
-Put `bin/forge` on your `PATH`. Helm itself is still needed for everything
-other than fetching dependencies.
+Put `bin/forge` on your `PATH`. You still need Helm for all tasks other than
+the dependency fetch.
 
 ## Commands
 
 ### `forge dep update [CHART]`
 
-Resolves the constraints in `Chart.yaml`, downloads the charts into
-`charts/` and writes `Chart.lock`.
+This command resolves the constraints in `Chart.yaml`. It downloads the charts
+into `charts/` and writes `Chart.lock`.
 
-- `CHART` defaults to `.`.
-- Exact versions (`1.2.0`) are locked as written, without asking the registry
-  — same as Helm.
-- Ranges (`^1.0.0`, `>=0.1.0 <1.0.0`) pick the highest matching tag. Each
-  repository's tag list is fetched once, even if several dependencies use it.
-- `Chart.lock` is rewritten only when its digest changes, so re-running
-  `update` with nothing new leaves the file (and its `generated:` time) alone.
+- The default `CHART` is `.`.
+- forge locks exact versions (`1.2.0`) as written and does not ask the
+  registry. Helm does the same.
+- For ranges (`^1.0.0`, `>=0.1.0 <1.0.0`), forge selects the highest tag that
+  matches. It fetches the tag list of each repository one time, also when
+  many dependencies use that repository.
+- forge writes `Chart.lock` again only when its digest changes. If you run
+  `update` again and nothing is new, the file (and its `generated:` time) does
+  not change.
 
 ### `forge dep build [CHART]`
 
-Downloads exactly the versions pinned in `Chart.lock`.
+This command downloads exactly the versions that `Chart.lock` pins.
 
-- With no `Chart.lock`, behaves like `dep update` (Helm does the same).
-- If `Chart.lock` no longer matches `Chart.yaml`, fails with Helm's message:
-  *"the lock file (Chart.lock) is out of sync with the dependencies file
-  (Chart.yaml). Please update the dependencies"*. Fix: run `forge dep update`.
+- If there is no `Chart.lock`, it does the same as `dep update`. Helm does the
+  same.
+- If `Chart.lock` does not match `Chart.yaml`, the command fails with Helm's
+  message: *"the lock file (Chart.lock) is out of sync with the dependencies
+  file (Chart.yaml). Please update the dependencies"*. To fix it, run
+  `forge dep update`.
 
 ### `forge dep tree [CHART]`
 
-Shows every dependency in `Chart.yaml`: its constraint, the version
-`Chart.lock` pins, where it comes from, and whether `dep build` would serve it
-from the cache. Reads `Chart.yaml`, `Chart.lock`, `repositories.yaml` and the
-cache only — **no network requests**.
+This command shows each dependency in `Chart.yaml`. For each one, it shows the
+constraint, the version that `Chart.lock` pins and the source. It also shows
+if `dep build` can get the dependency from the cache. The command reads only
+`Chart.yaml`, `Chart.lock`, `repositories.yaml` and the cache. It sends **no
+network requests**.
 
 ```
 my-chart 1.0.0
@@ -184,19 +194,24 @@ my-chart 1.0.0
 └── common         ~0.3.0   ->  0.3.0   file://../common            -        local
 ```
 
-States: `cached` (`dep build` makes no request for it), `not cached`
-(`dep build` downloads it), `local` (`file://`, packaged on every run) and
-`no lock` (no `Chart.lock` entry: run `forge dep update`). A `Chart.lock` that
-is out of sync with `Chart.yaml` is reported below the tree; entries are then
-matched by name and repository. Only the chart's own dependencies are shown,
-not theirs.
+The states are:
+
+- `cached`: `dep build` sends no request for it.
+- `not cached`: `dep build` downloads it.
+- `local`: a `file://` chart. forge packages it on each run.
+- `no lock`: there is no `Chart.lock` entry. Run `forge dep update`.
+
+If `Chart.lock` does not match `Chart.yaml`, the command shows this below the
+tree. It then matches the entries by name and repository. The command shows
+only the dependencies of the chart, not their dependencies.
 
 ### `forge dep why NAME [CHART]`
 
-Explains one dependency, by chart name or alias (every alias of a chart if you
-give its name): the `Chart.yaml` entry (constraint, repository, condition,
-tags), the locked version, the cached archive (digest, size, when it was
-fetched and last used, path) and whether `charts/` has it. No network
+This command explains one dependency. Give the chart name or the alias. If you
+give the chart name, the command explains all aliases of that chart. It shows
+the `Chart.yaml` entry (constraint, repository, condition, tags) and the
+locked version. It also shows the cached archive (digest, size, fetch time,
+last use, path) and if `charts/` has the archive. It sends no network
 requests.
 
 ```
@@ -209,14 +224,15 @@ redis (cache)
   charts/:     redis-18.1.0.tgz (present)
 ```
 
-An unknown name is a usage error (exit code `2`) that lists the chart's
-dependencies.
+An unknown name is a usage error (exit code `2`). The error lists the
+dependencies of the chart.
 
 ### `forge dep outdated [CHART]`
 
-Compares `Chart.lock` with what registries and chart repositories offer now:
-one `tags/list` per OCI repository and one `index.yaml` per chart repository
-(like `dep update`), nothing is downloaded and nothing is written.
+This command compares `Chart.lock` with the versions that registries and chart
+repositories offer now. Like `dep update`, it sends one `tags/list` request
+for each OCI repository and gets one `index.yaml` for each chart repository.
+It downloads no charts and writes no files.
 
 ```
 NAME           CONSTRAINT  LOCKED  WANTED  LATEST  STATE
@@ -226,60 +242,65 @@ common         ~0.3.0      0.3.0   0.3.0   0.3.0   up to date
 2 of 3 dependencies are not up to date
 ```
 
-- `WANTED` is what `forge dep update` would lock now; `LATEST` the highest
-  version available.
-- States: `up to date`; `update in constraint` (`dep update` would pick
-  `WANTED`); `newer outside constraint` (widen the constraint in `Chart.yaml`
-  to get `LATEST`); `no match` (nothing satisfies the constraint any more);
-  `no lock` (no `Chart.lock` entry).
-- Prereleases count as `LATEST` only with `--include-prerelease`, or when the
-  constraint itself selects one.
+- `WANTED` is the version that `forge dep update` would lock now. `LATEST` is
+  the highest available version.
+- The states are:
+  - `up to date`
+  - `update in constraint`: `dep update` would select `WANTED`.
+  - `newer outside constraint`: to get `LATEST`, make the constraint in
+    `Chart.yaml` wider.
+  - `no match`: no version satisfies the constraint now.
+  - `no lock`: there is no `Chart.lock` entry.
+- A prerelease counts as `LATEST` only with `--include-prerelease`, or when
+  the constraint itself selects a prerelease.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--include-prerelease` | `false` | Count prerelease versions as the latest |
-| `--fail-if-outdated` | `false` | Exit with code `1` if any dependency is not `up to date` (JSON: `success: false`, error code `outdated`) |
+| `--fail-if-outdated` | `false` | Exit with code `1` if a dependency is not `up to date` (JSON: `success: false`, error code `outdated`) |
 
-It also takes `--concurrency`, `--per-host`, `--plain-http`, `--timeout`,
-`--registry-config` and `--repository-config` as `dep update` does. If a
-repository can't be listed, the whole command fails with the same classified
-error `dep update` would report.
+The command also takes `--concurrency`, `--per-host`, `--plain-http`,
+`--timeout`, `--registry-config` and `--repository-config`, as `dep update`
+does. If forge cannot list a repository, the full command fails. It gives the
+same classified error as `dep update`.
 
 ### JSON output of `tree`, `why` and `outdated`
 
-With `-o json` all three print one document: `schemaVersion`, `command`,
-`chart` (the argument), `success`, `chartName`, `chartVersion`, `hasLock`,
-`lockInSync` and `dependencies`. Each dependency has `name`, `alias`,
-`constraint`, `repository`, `condition`, `tags`, `locked`, `state` (`cached`,
-`not_cached`, `local`, `no_lock`), `digest`, `sizeBytes`, `fetchedAt`,
-`lastUsed`, `blobPath`, `fileName` and `inCharts`. `dep why` lists only the
-matching dependencies. `dep outdated` adds `durationMs`,
-`summary` (`total`, `outdated`), `registries` (as for `dep build`) and, per
-dependency, `wanted`, `latest` and `freshness` (`up_to_date`,
-`update_in_constraint`, `newer_outside_constraint`, `no_match`, `no_lock`).
+With `-o json`, the three commands print one document. The document has
+`schemaVersion`, `command`, `chart` (the argument), `success`, `chartName`,
+`chartVersion`, `hasLock`, `lockInSync` and `dependencies`. Each dependency
+has `name`, `alias`, `constraint`, `repository`, `condition`, `tags`,
+`locked`, `state` (`cached`, `not_cached`, `local`, `no_lock`), `digest`,
+`sizeBytes`, `fetchedAt`, `lastUsed`, `blobPath`, `fileName` and `inCharts`.
 
-To gate CI on it:
+`dep why` lists only the dependencies that match. `dep outdated` adds
+`durationMs`, `summary` (`total`, `outdated`) and `registries` (as for
+`dep build`). For each dependency, it also adds `wanted`, `latest` and
+`freshness` (`up_to_date`, `update_in_constraint`,
+`newer_outside_constraint`, `no_match`, `no_lock`).
+
+To use it as a CI gate:
 
 ```sh
 forge dep outdated ./my-chart -o json > outdated.json || true
 jq -r '.dependencies[] | select(.freshness != "up_to_date") | "\(.name): \(.locked) → \(.latest) (\(.freshness))"' outdated.json
 ```
 
-`dependency` is an alias of `dep`, so `forge dependency build` also works.
+`dependency` is an alias of `dep`. Thus `forge dependency build` also works.
 
 ### `forge cache path`
 
-Prints the cache directory. Useful for CI cache steps.
+This command prints the cache directory. Use it in CI cache steps.
 
 ### `forge cache clean`
 
-Deletes the cache directory.
+This command deletes the cache directory.
 
 ### `forge cache ls`
 
-Lists every cached chart: name, version, size, when it was last used and
-where it came from. Makes no requests, and does not create the cache if it
-does not exist yet.
+This command lists all cached charts. For each chart, it shows the name,
+version, size, last use and source. It sends no requests. If the cache does
+not exist, the command does not create it.
 
 ```
 CHART  VERSION  SIZE     LAST-USED  SOURCE
@@ -293,13 +314,14 @@ nginx  1.27.3   41 KiB   12d ago    https://charts.example.com
 | `--sort` | `name` | `name`, `size` (largest first) or `age` (least recently used first) |
 | `-o`, `--output` | `text` | `text` or `json` |
 
-A chart whose archive is gone shows `missing` as its size. The total counts
-an archive shared by several charts (e.g. the same chart in two registries)
-once.
+If the archive of a chart is not there, the size column shows `missing`.
+Many charts can share one archive (for example, the same chart in two
+registries). The total counts that archive one time.
 
 ### `forge cache gc`
 
-Removes charts from the cache, least recently used first:
+This command removes charts from the cache. It removes the least recently used
+charts first:
 
 ```sh
 forge cache gc --older-than 30d          # not used for 30 days
@@ -307,37 +329,38 @@ forge cache gc --max-size 2GiB           # keep at most 2 GiB
 forge cache gc --older-than 30d --max-size 2GiB --dry-run
 ```
 
-1. Charts not used within `--older-than` are removed.
-2. Then, while the cache holds more than `--max-size`, the least recently used
-   archives (and every chart pointing at them) are removed.
-3. Entries that point at a missing archive, unreadable entries and archives
-   nothing points at are always removed.
+1. It removes the charts that were not used within `--older-than`.
+2. Then, while the cache is larger than `--max-size`, it removes the least
+   recently used archives. It also removes all charts that point to these
+   archives.
+3. It always removes entries that point to a missing archive, entries that it
+   cannot read, and archives that no entry points to.
 
-"Used" means fetched **or served from the cache**: every cache hit in
-`dep build` / `dep update` marks the chart as used, so charts a CI job needs
-every day stay, however long ago they were downloaded.
+"Used" means fetched **or served from the cache**. Each cache hit in
+`dep build` or `dep update` marks the chart as used. Thus the cache keeps the
+charts that a CI job needs each day, also if forge downloaded them long ago.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--older-than` | — | Remove charts not used for this long: `30d`, `2w`, `12h`, `90m` |
-| `--max-size` | — | Keep at most this much: bytes, `500MB` (powers of 1000) or `2GiB` (powers of 1024) |
-| `--grace` | `1h` | Never remove anything used or written this recently, so a `dep build` running at the same time keeps its charts |
-| `--dry-run` | `false` | Print what would be removed; remove nothing |
-| `-v`, `--verbose` | `false` | List removed charts |
+| `--older-than` | None | Remove charts that were not used for this time: `30d`, `2w`, `12h`, `90m` |
+| `--max-size` | None | Keep at most this size: bytes, `500MB` (powers of 1000) or `2GiB` (powers of 1024) |
+| `--grace` | `1h` | Never remove items that were used or written within this time. Thus a `dep build` that runs at the same time keeps its charts |
+| `--dry-run` | `false` | Print what the command would remove. Do not remove anything |
+| `-v`, `--verbose` | `false` | List the removed charts |
 | `-o`, `--output` | `text` | `text` or `json` |
 
-At least one of `--older-than` and `--max-size` is required (exit code `2`
-otherwise); use `forge cache clean` to remove everything. `gc` takes no lock
-and is safe to run while other forge processes use the cache: a run that
-loses an archive to `gc` just downloads it again.
+You must give `--older-than`, `--max-size` or both. If you give neither, the
+exit code is `2`. To remove all of the cache, use `forge cache clean`. `gc`
+takes no lock. You can run it while other forge processes use the cache. If
+`gc` removes an archive that a run needs, the run downloads it again.
 
-The space freed is the size of the removed archives. An archive that is
-hardlinked into some chart's `charts/` keeps using disk until that copy is
-deleted too.
+The freed space is the size of the removed archives. An archive can be
+hardlinked into the `charts/` of a chart. That copy uses disk space until you
+also delete it.
 
-With `-o json`, both commands print one document with `schemaVersion`,
+With `-o json`, both commands print one document. It has `schemaVersion`,
 `command` (`cache ls` / `cache gc`), `cache` (the directory) and `success`.
-`cache ls` adds `summary` (`charts`, `sizeBytes`) and `entries`; `cache gc`
+`cache ls` adds `summary` (`charts`, `sizeBytes`) and `entries`. `cache gc`
 adds `dryRun`, `summary` (`chartsRemoved`, `blobsRemoved`, `bytesFreed`,
 `blobsKept`, `bytesKept`) and `removed`. Each entry has `name`, `version`,
 `repository`, `source` (`oci` or `repo`), `state` (`ok`, `missing` or
@@ -347,30 +370,31 @@ adds `dryRun`, `summary` (`chartsRemoved`, `blobsRemoved`, `bytesFreed`,
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--concurrency` | `16` | Max requests in flight in total |
-| `--per-host` | `8` | Max requests in flight per host |
-| `--refresh` | `false` | Re-check versions with registries and repositories instead of trusting the cached version→digest mapping |
-| `--plain-http` | `false` | Use plain HTTP for OCI registries (e.g. a local `registry:2`). Chart repositories use the scheme in their URL |
-| `--timeout` | `5m` | Time limit for the whole run |
+| `--concurrency` | `16` | Maximum number of requests in flight in total |
+| `--per-host` | `8` | Maximum number of requests in flight for each host |
+| `--refresh` | `false` | Ask the registries and repositories for the versions again. Do not trust the cached version→digest mapping |
+| `--plain-http` | `false` | Use plain HTTP for OCI registries (for example, a local `registry:2`). Chart repositories use the scheme in their URL |
+| `--timeout` | `5m` | Time limit for the full run |
 | `--registry-config` | Helm's path | Helm's registry credentials file |
 | `--repository-config` | Helm's path | Helm's `repositories.yaml` (`@name` repositories, credentials, TLS) |
 | `-o`, `--output` | `text` | `text` or `json` (see [JSON output](#json-output)) |
 
-Per-request timeout is 60 s; failed requests are retried (see
+The timeout for each request is 60 s. forge tries failed requests again (see
 [Errors and retries](#errors-and-retries)).
 
 ## Environment
 
 | Variable | Effect |
 |---|---|
-| `HELM_FORGE_CACHE` | Cache root. Default `~/.cache/helm-forge`, or `$HELM_CACHE_HOME/forge` when run as `helm forge` |
-| `HELM_REGISTRY_CONFIG` | Credentials file, same as Helm. Default: Helm's `registry/config.json` |
-| `HELM_REPOSITORY_CONFIG` | Chart repositories file, same as Helm. Default: Helm's `repositories.yaml` |
-| `HELM_FORGE_PLUGIN_URL` | Plugin install hook only: base URL for release downloads (mirror) |
+| `HELM_FORGE_CACHE` | Cache root. The default is `~/.cache/helm-forge`, or `$HELM_CACHE_HOME/forge` when you run `helm forge` |
+| `HELM_REGISTRY_CONFIG` | Credentials file, as in Helm. The default is Helm's `registry/config.json` |
+| `HELM_REPOSITORY_CONFIG` | Chart repositories file, as in Helm. The default is Helm's `repositories.yaml` |
+| `HELM_FORGE_PLUGIN_URL` | Only for the plugin install hook: the base URL for release downloads (a mirror) |
 
 ## Authentication
 
-forge reads credentials only from Helm's own files, so log in the usual way.
+forge reads credentials only from the files of Helm. Log in as you do for
+Helm.
 
 OCI registries use Helm's registry config:
 
@@ -379,41 +403,44 @@ helm registry login ghcr.io
 forge dep build ./my-chart
 ```
 
-Chart repositories use `repositories.yaml`. Its username/password, CA file,
-client certificate and `insecure_skip_tls_verify` apply to any dependency whose
-URL matches the repository, and to `@name` references:
+Chart repositories use `repositories.yaml`. forge applies its username and
+password, CA file, client certificate and `insecure_skip_tls_verify` to each
+dependency whose URL matches the repository. It also applies them to `@name`
+references:
 
 ```sh
 helm repo add acme https://charts.acme.example --username me --password-stdin
 forge dep build ./my-chart
 ```
 
-As in Helm, credentials go only to the repository's own scheme and host. If
-`index.yaml` points archives at another host, add `--pass-credentials` to
-`helm repo add` to send them there too.
+As in Helm, forge sends credentials only to the scheme and host of the
+repository. If `index.yaml` points archives to a different host, add
+`--pass-credentials` to `helm repo add`. forge then sends the credentials to
+that host too.
 
-Unlike `helm dependency build`, forge does not require `helm repo add` for a
-chart repository URL; without an entry, access is anonymous. A missing file
-means anonymous access everywhere.
+`helm dependency build` needs `helm repo add` for a chart repository URL.
+forge does not. If there is no entry for the URL, forge uses anonymous access.
+If the file does not exist, forge uses anonymous access for all repositories.
 
 ## Output
 
-On success forge prints one line:
+If the run succeeds, forge prints one line:
 
 ```
 Saved 12 charts (9 cached, 3 downloaded) in 412ms
 ```
 
-Aliases of one chart count separately in `Saved`, but the archive is
-downloaded only once. Charts packaged from `file://` directories add
-`, N local` to the counts.
+Each alias of a chart counts separately in `Saved`, but forge downloads the
+archive only one time. If forge packages charts from `file://` directories, it
+adds `, N local` to the counts.
 
 ### JSON output
 
 With `-o json`, `dep build` and `dep update` print one JSON document on
-stdout instead of the `Saved …` line. They print it on success and on failure. Errors still go to
-stderr as text, so `forge dep build -o json | jq` always gets valid JSON.
-Exit codes do not change.
+stdout. This document replaces the `Saved …` line. The commands print it when
+the run succeeds and when it fails. Errors still go to stderr as text. Thus
+`forge dep build -o json | jq` always gets valid JSON. The exit codes do not
+change.
 
 !!! tip "Interactive"
     On the docs site, click the :material-plus-circle: markers to see what each field means.
@@ -469,77 +496,81 @@ Exit codes do not change.
 }
 ```
 
-1.  Raised only for changes that could break a consumer. New fields can be
-    added without raising it.
-2.  `true` exactly when the exit code is `0`. Use `jq -e .success` as the CI gate.
-3.  Counts of `dependencies` by status. `saved` = `cached` + `downloaded` + `local`.
-    `charts/` is updated only when `success` is `true`.
-4.  `true` when `Chart.lock` was written — by `dep update`, or by `dep build`
-    without a lock.
-5.  One entry per `Chart.yaml` dependency, in order. Empty when the run stopped
-    before resolving, e.g. `Chart.lock` out of sync.
-6.  The version exactly as written in `Chart.yaml`. `version` is what got locked.
-7.  `cached`: served from the cache without any request. `downloaded`: needed at
-    least one request. See the [status table](#status-values).
-8.  Packaged from a `file://` directory on every run — no cache, no request.
-    `file://` dependencies have `sizeBytes` but no `digest`.
+1.  This number goes up only for changes that can break a consumer. New fields
+    can appear without a change to this number.
+2.  `true` only when the exit code is `0`. Use `jq -e .success` as the CI gate.
+3.  The number of `dependencies` for each status. `saved` = `cached` +
+    `downloaded` + `local`. forge updates `charts/` only when `success` is
+    `true`.
+4.  `true` when forge wrote `Chart.lock`. `dep update` writes it, and
+    `dep build` writes it when there is no lock.
+5.  One entry for each `Chart.yaml` dependency, in order. It is empty when the
+    run stopped before it resolved the versions (for example, when
+    `Chart.lock` is out of sync).
+6.  The version exactly as written in `Chart.yaml`. `version` is the locked
+    version.
+7.  `cached`: served from the cache without a request. `downloaded`: needed
+    one or more requests. See the [status table](#status-values).
+8.  Packaged from a `file://` directory on each run, with no cache and no
+    request. `file://` dependencies have `sizeBytes` but no `digest`.
 9.  Present when `status` is `failed`. Match on `code`, never on `message`.
     See the [error codes](#error-codes).
-10. One per host contacted, sorted by host. `requests` counts every HTTP request
-    (retries included), `retries` repeats after 408/429/5xx/network errors,
-    `authRounds` `401` challenges. A warm run has none.
+10. One entry for each host that forge contacted, sorted by host. `requests`
+    counts all HTTP requests, retries included. `retries` counts the repeats
+    after 408, 429, 5xx and network errors. `authRounds` counts the `401`
+    challenges. A warm run has no entries.
 
 | Field | Meaning |
 |---|---|
-| `schemaVersion` | `1`. It is raised only for changes that could break a consumer. New fields can be added without raising it |
+| `schemaVersion` | `1`. It goes up only for changes that can break a consumer. New fields can appear without a change to this number |
 | `command` | `dep build` or `dep update` |
 | `chart` | The `CHART` argument as given (default `.`) |
-| `success` | `true` exactly when the exit code is `0` |
+| `success` | `true` only when the exit code is `0` |
 | `durationMs` | Wall time of the run |
-| `summary` | Counts of `dependencies` by status. `saved` = `cached` + `downloaded` + `local`. `charts/` is updated only when `success` is `true` |
-| `lockWritten` | `true` when `Chart.lock` was written (by `dep update`, or by `dep build` without a lock) |
-| `dependencies[]` | One per `Chart.yaml` dependency, in order. Empty when the run stopped before resolving, e.g. `Chart.lock` out of sync |
+| `summary` | The number of `dependencies` for each status. `saved` = `cached` + `downloaded` + `local`. forge updates `charts/` only when `success` is `true` |
+| `lockWritten` | `true` when forge wrote `Chart.lock` (`dep update`, or `dep build` without a lock) |
+| `dependencies[]` | One entry for each `Chart.yaml` dependency, in order. Empty when the run stopped before it resolved the versions (for example, `Chart.lock` out of sync) |
 | `dependencies[].alias`, `.constraint` | From `Chart.yaml`. `constraint` is the version as written |
-| `dependencies[].version` | The locked version. Missing when resolving failed |
-| `dependencies[].digest`, `.sizeBytes` | The chart archive's digest and size. `file://` dependencies have only `sizeBytes` |
-| `dependencies[].placement` | How the archive got into `charts/`: `reflink`, `hardlink` or `copy`. Present only when `charts/` was updated |
-| `dependencies[].durationMs` | Time spent fetching (or, for `file://`, packaging) this chart (aliases of one chart share it). Missing when no fetch was attempted |
+| `dependencies[].version` | The locked version. Not present when the resolve step failed |
+| `dependencies[].digest`, `.sizeBytes` | The digest and size of the chart archive. `file://` dependencies have only `sizeBytes` |
+| `dependencies[].placement` | How forge put the archive into `charts/`: `reflink`, `hardlink` or `copy`. Present only when forge updated `charts/` |
+| `dependencies[].durationMs` | The time to fetch this chart (or, for `file://`, to package it). Aliases of one chart share this value. Not present when forge did not try a fetch |
 | `dependencies[].error` | Present when `status` is `failed` |
-| `registries[]` | One per host contacted (OCI registries and chart repositories), sorted by host. `requests` counts every HTTP request, retries included. `retries` counts repeats after 408/429/5xx/network errors. `authRounds` counts `401` challenges. Token servers and blob-redirect hosts appear as hosts of their own. A warm run has none |
-| `error` | Present for failures that no single dependency explains, e.g. a lock out of sync, a timeout, or an unreadable `Chart.yaml` |
+| `registries[]` | One entry for each host that forge contacted (OCI registries and chart repositories), sorted by host. `requests` counts all HTTP requests, retries included. `retries` counts the repeats after 408, 429, 5xx and network errors. `authRounds` counts the `401` challenges. Token servers and blob-redirect hosts have their own entries. A warm run has no entries |
+| `error` | Present for failures that no single dependency explains. Examples: a lock out of sync, a timeout, or a `Chart.yaml` that forge cannot read |
 
 #### Status values
 
-`status` is one of:
+`status` has one of these values:
 
 | Status | Meaning |
 |---|---|
-| `cached` | Served from the cache without any request |
-| `downloaded` | Needed at least one request |
-| `local` | Packaged from a `file://` directory (every run; no cache, no request) |
+| `cached` | Served from the cache without a request |
+| `downloaded` | Needed one or more requests |
+| `local` | Packaged from a `file://` directory (on each run, with no cache and no request) |
 | `failed` | See `error` |
-| `skipped` | Not attempted because the run stopped first (another dependency had no matching version or an unsupported repository) |
+| `skipped` | Not tried, because the run stopped first. Another dependency had no matching version or an unsupported repository |
 
 #### Error codes
 
-Every `error` object has a stable `code`, a `message`, and optionally `httpStatus`
-and `hint`. Match on `code`, not on `message`:
+Each `error` object has a stable `code` and a `message`. It can also have
+`httpStatus` and `hint`. Match on `code`, not on `message`:
 
 | Code | Meaning |
 |---|---|
-| `unauthorized` | `401`: no or expired credentials |
-| `forbidden` | `403`: credentials lack pull access |
-| `not_found` | `404`: the version tag or archive does not exist, or the chart repository index has no such chart/version |
-| `not_a_chart` | The tag is a container image or another artifact |
-| `digest_mismatch` | Downloaded content did not match its digest twice |
+| `unauthorized` | `401`: the credentials are missing or expired |
+| `forbidden` | `403`: the credentials do not give pull access |
+| `not_found` | `404`: the version tag or archive does not exist, or the chart repository index does not have that chart or version |
+| `not_a_chart` | The tag is a container image or a different artifact |
+| `digest_mismatch` | Two times, the downloaded content did not match its digest |
 | `no_matching_version` | No tag, index entry or local `file://` chart satisfies the constraint. `hint` lists the nearest versions |
-| `unsupported_repository` | Not an `oci://`, `http(s)://`, `file://` or `@alias` repository |
-| `timeout` | `--timeout` reached, or a request timed out |
+| `unsupported_repository` | The repository is not `oci://`, `http(s)://`, `file://` or `@alias` |
+| `timeout` | The run reached `--timeout`, or a request timed out |
 | `lock_out_of_sync` | `Chart.lock` does not match `Chart.yaml` (top-level `error` only) |
-| `interrupted` | SIGINT/SIGTERM (top-level `error` only) |
+| `interrupted` | SIGINT or SIGTERM (top-level `error` only) |
 | `outdated` | `dep outdated --fail-if-outdated` found a dependency that is not up to date (top-level `error` only) |
 | `usage` | Usage error, exit code `2` (see below) |
-| `unknown` | Anything else. Read `message` |
+| `unknown` | All other errors. Read `message` |
 
 A usage error with `-o json` prints a smaller document:
 
@@ -552,7 +583,7 @@ A usage error with `-o json` prints a smaller document:
 }
 ```
 
-To turn failures into GitHub Actions annotations:
+To show failures as GitHub Actions annotations:
 
 ```sh
 forge dep build -o json ./my-chart > forge.json || true
@@ -563,35 +594,37 @@ jq -e .success forge.json > /dev/null
 
 ## What ends up in `charts/`
 
-- One `<name>-<version>.tgz` per dependency — byte-identical to what Helm
-  downloads. Chart repository archives keep the file name of their URL in
-  `index.yaml`, as in Helm.
-- `file://` dependencies are packaged from their directory on every run, with
-  Helm's own packaging code (no cache, no network); the archive's contents
-  match Helm's. `dep build` fails if the
-  directory's chart version no longer matches `Chart.lock`.
-- Stale chart archives (no longer a dependency) are removed, as
-  `helm dep build` does. Non-chart files and unpacked subchart directories are
-  kept.
-- Archives are reflinked, hardlinked or copied from the cache (cheapest first).
-  A hardlinked archive is read-only (`0444`); that is expected.
+- One `<name>-<version>.tgz` for each dependency. The bytes are the same as
+  the file that Helm downloads. Archives from chart repositories keep the file
+  name of their URL in `index.yaml`, as in Helm.
+- forge packages `file://` dependencies from their directory on each run. It
+  uses Helm's own packaging code, with no cache and no network. The contents
+  of the archive match Helm's. `dep build` fails if the chart version in the
+  directory does not match `Chart.lock`.
+- forge removes stale chart archives (archives that are no longer a
+  dependency), as `helm dep build` does. It keeps files that are not charts
+  and unpacked subchart directories.
+- forge puts the archives from the cache into `charts/` with a reflink, a
+  hardlink or a copy, and tries the cheapest method first. A hardlinked
+  archive is read-only (`0444`). This is correct.
 
-A run that fails leaves `charts/` exactly as it was.
+If a run fails, `charts/` does not change.
 
 ## Exit codes
 
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `1` | Something failed — each failed dependency is listed; or `dep outdated --fail-if-outdated` found outdated dependencies |
+| `1` | A failure. forge lists each failed dependency. This code also means that `dep outdated --fail-if-outdated` found outdated dependencies |
 | `2` | Usage error (bad flag, too many arguments, `--concurrency 0`, unknown name for `dep why`, `cache gc` without limits, …) |
 
 ## Errors and retries
 
-forge retries `408`, `429`, `5xx` and network errors up to 3 times, backing off
-200 ms × 2ⁿ with jitter, or honouring `Retry-After` (max 30 s).
+forge tries `408`, `429`, `5xx` and network errors again, up to 3 times. The
+wait time is 200 ms × 2ⁿ with jitter. If the server sends `Retry-After`, forge
+uses that value (max 30 s).
 
-When dependencies still fail, all of them are reported together:
+If dependencies still fail, forge reports all of them together:
 
 ```
 Error: 2 dependencies failed:
@@ -601,26 +634,27 @@ Error: 2 dependencies failed:
 
 | Message | Cause | Fix |
 |---|---|---|
-| `401 unauthorized; run 'helm registry login <host>'` | No or expired credentials | `helm registry login <host>` |
-| `403 forbidden` | Credentials lack pull access | Check repository permissions |
-| `404 not found` | Version tag does not exist | Fix the version, or `forge dep update` |
-| `… is not a Helm chart (layer media types: …)` | The tag is a container image or other artifact | Point the dependency at a chart |
-| `downloaded content did not match its digest twice` | Corruption or a proxy rewriting responses | Check proxies; retry |
-| `can't get a valid version for N subchart(s)` | No tag satisfies the range | forge lists up to 5 available versions; adjust the constraint |
-| `401 unauthorized; add credentials with 'helm repo add …'` | Chart repository needs credentials | `helm repo add <name> <url> --username …` |
-| `404 not found: <url>` | Archive listed in `index.yaml` is missing | Fix the repository, or `forge dep update` |
-| `<chart> chart not found in repo <url>` | `index.yaml` has no such chart | Fix the name or repository |
-| `no repository definition for @name` | `@name` / `alias:name` not in `repositories.yaml` | `helm repo add name <url>` |
-| `directory … not found` | `file://` path does not exist (relative to the chart) | Fix the path |
-| `can't get a valid version for dependency <name>` | `file://` chart's version changed since `Chart.lock` | `forge dep update` |
-| `forge supports oci://, http(s)://, file:// and @alias repositories` | No `repository`, or another scheme | Use `helm dependency build` for that chart |
-| `timed out after 5m0s` | `--timeout` reached | Raise `--timeout` or check the network |
+| `401 unauthorized; run 'helm registry login <host>'` | The credentials are missing or expired | `helm registry login <host>` |
+| `403 forbidden` | The credentials do not give pull access | Examine the repository permissions |
+| `404 not found` | The version tag does not exist | Correct the version, or run `forge dep update` |
+| `… is not a Helm chart (layer media types: …)` | The tag is a container image or a different artifact | Point the dependency to a chart |
+| `downloaded content did not match its digest twice` | Corrupt data, or a proxy that changes responses | Examine your proxies and try again |
+| `can't get a valid version for N subchart(s)` | No tag satisfies the range | forge lists up to 5 available versions. Change the constraint |
+| `401 unauthorized; add credentials with 'helm repo add …'` | The chart repository needs credentials | `helm repo add <name> <url> --username …` |
+| `404 not found: <url>` | An archive in `index.yaml` is missing | Correct the repository, or run `forge dep update` |
+| `<chart> chart not found in repo <url>` | `index.yaml` does not have that chart | Correct the name or the repository |
+| `no repository definition for @name` | `@name` or `alias:name` is not in `repositories.yaml` | `helm repo add name <url>` |
+| `directory … not found` | The `file://` path does not exist (the path is relative to the chart) | Correct the path |
+| `can't get a valid version for dependency <name>` | The version of the `file://` chart changed after `Chart.lock` was written | `forge dep update` |
+| `forge supports oci://, http(s)://, file:// and @alias repositories` | There is no `repository`, or it has a different scheme | Use `helm dependency build` for that chart |
+| `timed out after 5m0s` | The run reached `--timeout` | Increase `--timeout`, or examine the network |
 
 ## Caching in CI
 
-The cache is safe to share between concurrent forge processes and to restore
-from a CI cache. Example for GitHub Actions with the Helm plugin (its cache
-lives under Helm's cache dir, so ask `helm forge cache path`):
+Concurrent forge processes can share the cache safely. You can also restore
+the cache from a CI cache. The example below is for GitHub Actions with the
+Helm plugin. The plugin keeps its cache in the cache directory of Helm, so get
+the path from `helm forge cache path`:
 
 ```yaml
 - uses: azure/setup-helm@v4
@@ -637,11 +671,11 @@ lives under Helm's cache dir, so ask `helm forge cache path`):
 - run: helm forge cache gc --older-than 30d --max-size 2GiB
 ```
 
-Drop `--verify=false` if the runner has Helm 3. With the standalone binary, use
-`forge cache path` and `forge dep build` instead. To turn a failed run into
+If the runner has Helm 3, remove `--verify=false`. With the standalone binary,
+use `forge cache path` and `forge dep build`. To show a failed run as
 annotations, see [JSON output](#json-output).
 
-With a warm cache, `forge dep build` makes no requests at all (`file://`
-dependencies are packaged locally, which needs no network).
-Cached tag→digest mappings are trusted; pass `--refresh` if tags in your
-registry are overwritten (e.g. re-pushed `1.0.0`).
+With a warm cache, `forge dep build` sends no requests. (forge packages
+`file://` dependencies locally, without the network.) forge trusts the cached
+tag→digest mappings. If your registry overwrites tags (for example, a
+re-pushed `1.0.0`), use `--refresh`.

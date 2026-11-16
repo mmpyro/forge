@@ -10,9 +10,9 @@ hide:
 
 # forge
 
-**Fast, Helm-identical `helm dependency build` / `update`** for charts whose
-dependencies live in OCI registries, classic chart repositories
-(`https://…/index.yaml`) or local `file://` directories.
+**A fast `helm dependency build` and `update` with the same output as Helm.**
+It is for charts whose dependencies are in OCI registries, classic chart
+repositories (`https://…/index.yaml`) or local `file://` directories.
 
 [Get started](#install){ .md-button .md-button--primary }
 [Usage guide](usage.md){ .md-button }
@@ -20,9 +20,9 @@ dependencies live in OCI registries, classic chart repositories
 
 </div>
 
-forge writes the same `charts/*.tgz` and `Chart.lock` that Helm would, so
-`helm template`, `helm install` and `helm package` keep working unchanged —
-they just get their dependencies faster.
+forge writes the same `charts/*.tgz` and `Chart.lock` as Helm. Thus
+`helm template`, `helm install` and `helm package` work without changes. They
+only get their dependencies faster.
 
 ```sh
 helm forge dep update ./my-chart   # resolve ranges, download, write Chart.lock
@@ -41,7 +41,8 @@ same commands and flags.
 
     ---
 
-    Every dependency is fetched concurrently, with global and per-host limits.
+    forge fetches all dependencies at the same time, with a global limit and
+    a limit for each host.
 
     [:octicons-arrow-right-24: Limits and retries](architecture.md#limits-and-retries)
 
@@ -49,8 +50,8 @@ same commands and flags.
 
     ---
 
-    The first request to a host runs alone; the token it earns is reused by
-    all the others.
+    The first request to a host runs alone. All other requests use the token
+    that it gets.
 
     [:octicons-arrow-right-24: How it works](architecture.md#one-auth-handshake-per-registry)
 
@@ -58,8 +59,8 @@ same commands and flags.
 
     ---
 
-    Archives are stored by sha256 and shared across charts, aliases and
-    processes. A warm `dep build` makes **zero** requests.
+    forge stores archives by sha256. Charts, aliases and processes share
+    them. A warm `dep build` sends **zero** requests.
 
     [:octicons-arrow-right-24: The store](architecture.md#the-store)
 
@@ -67,7 +68,7 @@ same commands and flags.
 
     ---
 
-    Nothing in `charts/` changes unless every dependency succeeded.
+    `charts/` changes only if all dependencies succeed.
 
     [:octicons-arrow-right-24: Atomic charts/](architecture.md#atomic-charts)
 
@@ -75,17 +76,17 @@ same commands and flags.
 
     ---
 
-    `-o json` gives CI a stable error `code` per failed dependency instead of
-    parsing text.
+    With `-o json`, CI gets a stable error `code` for each failed
+    dependency. CI does not have to parse text.
 
     [:octicons-arrow-right-24: JSON output](usage.md#json-output)
 
--   :material-scale-balance:{ .lg .middle } **Helm-identical output**
+-   :material-scale-balance:{ .lg .middle } **Same output as Helm**
 
     ---
 
-    Archive bytes, `Chart.lock` (apart from `generated:`) and `helm template`
-    output are checked against real Helm 3 and Helm 4 in CI.
+    CI compares archive bytes, `Chart.lock` (except `generated:`) and
+    `helm template` output with real Helm 3 and Helm 4.
 
     [:octicons-arrow-right-24: Helm is the oracle](architecture.md#helm-is-the-oracle)
 
@@ -93,7 +94,7 @@ same commands and flags.
 
 ## Install
 
-Pick how you run Helm. The choice is remembered across the docs.
+Select how you run Helm. The docs site keeps your selection on all pages.
 
 === "Helm 4"
 
@@ -124,7 +125,7 @@ Pick how you run Helm. The choice is remembered across the docs.
 
     Download [`forge-windows-amd64.exe`](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-amd64.exe)
     or [`forge-windows-arm64.exe`](https://github.com/mmpyro/forge/releases/download/v2.1.0/forge-windows-arm64.exe),
-    rename it to `forge.exe` and put it in a directory on your `PATH`.
+    Rename it to `forge.exe` and put it in a directory on your `PATH`.
 
     ```powershell
     forge --version
@@ -137,44 +138,49 @@ Pick how you run Helm. The choice is remembered across the docs.
     bin/forge --version
     ```
 
-Mirrors, checksums, upgrades and troubleshooting: [Usage → Install](usage.md#install).
+For mirrors, checksums, upgrades and troubleshooting, see
+[Usage → Install](usage.md#install).
 
 ## What's new in 2.1
 
-- **Inspect dependencies.** `dep tree` shows each dependency's constraint,
-  locked version, source and cache state; `dep why NAME` explains one of them.
-  Both make no requests. `dep outdated` compares `Chart.lock` with what
-  registries offer now, and `--fail-if-outdated` gates CI on it. See
+- **Inspect dependencies.** `dep tree` shows the constraint, locked version,
+  source and cache state of each dependency. `dep why NAME` explains one
+  dependency. These two commands send no requests. `dep outdated` compares
+  `Chart.lock` with the versions that registries offer now. Use
+  `--fail-if-outdated` to stop a CI job when a dependency is outdated. See
   [Usage → `forge dep tree`](usage.md#forge-dep-tree-chart).
-- **Manage the cache.** `cache ls` lists cached charts with size and last use;
-  `cache gc --older-than 30d --max-size 2GiB` evicts least recently used ones
-  and is safe to run alongside other forge processes. See
+- **Manage the cache.** `cache ls` lists the cached charts with their size
+  and last use. `cache gc --older-than 30d --max-size 2GiB` removes the least
+  recently used charts. You can run it while other forge processes run. See
   [Usage → `forge cache gc`](usage.md#forge-cache-gc).
 
 [Release notes and downloads](https://github.com/mmpyro/forge/releases/tag/v2.1.0).
 
 ## What's new in 2.0
 
-- **Chart repositories and `file://` dependencies.** Besides OCI registries,
-  forge now fetches from classic `https://…/index.yaml` repositories (including
-  `@name` references from `helm repo add`) and packages local `file://` charts.
-- **`-o json` output.** `dep build` and `dep update` can print one JSON report:
-  per-dependency status, digest, size and a classified error code, plus request
-  counts per host. See [Usage → JSON output](usage.md#json-output).
-- **Distributed as a Helm plugin.** Install with `helm plugin install`, run
-  as `helm forge`. The Homebrew tap is discontinued.
+- **Chart repositories and `file://` dependencies.** forge now also fetches
+  from classic `https://…/index.yaml` repositories, which includes `@name`
+  references from `helm repo add`. It also packages local `file://` charts.
+- **`-o json` output.** `dep build` and `dep update` can print one JSON
+  report. The report gives the status, digest, size and error code of each
+  dependency, and the request count for each host. See
+  [Usage → JSON output](usage.md#json-output).
+- **Helm plugin.** Install forge with `helm plugin install` and run it as
+  `helm forge`. The Homebrew tap is discontinued.
 
 ## Benchmark
 
-A parent chart with 50 subcharts (2.4 MiB in total): `forge dep build` took
-**4.6 s**, `helm dependency update --skip-refresh` took **30.4 s** — about
-**6.6× faster**. forge started with 14 of the 50 charts in its cache; helm was
-mostly waiting on the network (11 % CPU).
+The test used a parent chart with 50 subcharts (2.4 MiB in total).
+`forge dep build` took **4.6 s**. `helm dependency update --skip-refresh`
+took **30.4 s**. forge was about **6.6× faster**. At the start, forge had 14
+of the 50 charts in its cache. Helm spent most of the time on the network
+(11 % CPU).
 
 ![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](images/benchmark.png)
 
-For a reproducible comparison (40 charts, +50 ms latency, cold and warm), run
-`make bench`; see [Development → Benchmark](development.md#benchmark--scriptsbenchsh).
+For a comparison that you can repeat (40 charts, +50 ms latency, cold and
+warm), run `make bench`. See
+[Development → Benchmark](development.md#benchmark-scriptsbenchsh).
 
 ## Scope
 
@@ -184,29 +190,29 @@ For a reproducible comparison (40 charts, +50 ms latency, cold and warm), run
 
     - `apiVersion: v2` charts
     - dependencies with `repository:`
-        - `oci://…` — OCI registries
-        - `https://…` / `http://…` — classic chart repositories, whether or not
-          they were added with `helm repo add`
-        - `@name` / `alias:name` — repositories from Helm's `repositories.yaml`
-          (credentials and TLS settings are used too)
-        - `file://…` — local chart directories, packaged like Helm does
-    - exact versions and semver ranges (same resolver rules as Helm)
-    - aliases, conditions/tags, prerelease and build-metadata versions
+        - `oci://…`: OCI registries
+        - `https://…` and `http://…`: classic chart repositories, added with
+          `helm repo add` or not
+        - `@name` and `alias:name`: repositories from Helm's `repositories.yaml`
+          (forge also uses their credentials and TLS settings)
+        - `file://…`: local chart directories, packaged as Helm packages them
+    - exact versions and semver ranges (with the same resolver rules as Helm)
+    - aliases, conditions and tags, prerelease and build-metadata versions
 
-!!! failure "Not supported (forge exits before any network call)"
+!!! failure "Not supported (forge stops before it sends a request)"
 
-    - dependencies without a `repository` (unpacked in `charts/`) and other
+    - dependencies without a `repository` (unpacked in `charts/`), and other
       schemes (`s3://`, plugin getters)
     - `apiVersion: v1` charts
 
-    **Not implemented yet:** `push`/`pull`, `package`, adaptive concurrency, HTTP/3.
+    **Not available yet:** `push`/`pull`, `package`, adaptive concurrency, HTTP/3.
 
 </div>
 
 ## Guides
 
-| Guide | Read it when you want to… |
+| Guide | Read it to… |
 |---|---|
 | [Usage](usage.md) | install forge, run it, set flags, cache it in CI, read its errors, parse its `-o json` output |
-| [Architecture](architecture.md) | understand how a run works and why it is fast and safe |
-| [Development](development.md) | build, test, regenerate goldens, run the compat gate and benchmark |
+| [Architecture](architecture.md) | learn how a run works and why it is fast and safe |
+| [Development](development.md) | build, test, regenerate goldens, run the compat gate and the benchmark |
