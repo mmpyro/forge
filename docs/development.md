@@ -14,7 +14,7 @@
 
 ```sh
 make build              # bin/forge, version via -ldflags "-X main.Version=$(VERSION)" (default 0.1.0)
-make test               # go test ./... — no network, no docker
+make test               # go test ./...: no network, no docker
 go test -race ./...     # what CI runs
 go test ./internal/resolve -run TestName -v
 
@@ -28,27 +28,28 @@ make docs-serve         # docs site with live reload, http://127.0.0.1:8000/forg
 make docs-build         # mkdocs build --strict → site/
 ```
 
-`make plugin-smoke` (`scripts/plugin-smoke.sh`) builds the host binary into a
-fake release served on `127.0.0.1:18765` and points the install hook at it via
-`HELM_FORGE_PLUGIN_URL`. Then, for each helm in `$HELMS`, it checks:
+`make plugin-smoke` (`scripts/plugin-smoke.sh`) builds the host binary and
+puts it in a fake release on `127.0.0.1:18765`. It sets
+`HELM_FORGE_PLUGIN_URL` so that the install hook uses this release. Then, for
+each helm in `$HELMS`, it checks that:
 
-- a corrupted `checksums.txt` makes the install fail
+- the install fails when `checksums.txt` is corrupt
 - `helm forge --version` and `helm forge cache path` work
-- if the registry is up (`make fixtures`), `helm forge dep update` gives the
-  same `charts/` and `Chart.lock` as standalone forge
+- `helm forge dep update` gives the same `charts/` and `Chart.lock` as
+  standalone forge, if the registry is up (`make fixtures`)
 
-Helm 4's installer ignores `HELM_PLUGINS`, so the script isolates plugins with
-`HELM_DATA_HOME` instead.
+The installer of Helm 4 ignores `HELM_PLUGINS`. Thus the script uses
+`HELM_DATA_HOME` to isolate plugins.
 
-The local registry is plain HTTP — pass `--plain-http` when running forge
-against it by hand:
+The local registry uses plain HTTP. When you run forge against it by hand, use
+`--plain-http`:
 
 ```sh
 make fixtures
 bin/forge dep update --plain-http testdata/charts/ranges
 ```
 
-Use a throwaway cache so you don't pollute `~/.cache/helm-forge`:
+Use a temporary cache, so that you do not change `~/.cache/helm-forge`:
 
 ```sh
 HELM_FORGE_CACHE=$(mktemp -d) bin/forge dep build --plain-http ./chart
@@ -58,71 +59,77 @@ HELM_FORGE_CACHE=$(mktemp -d) bin/forge dep build --plain-http ./chart
 
 ### Unit tests
 
-No network. Registry behaviour comes from `internal/testutil/fakeregistry`,
-an in-memory OCI registry that records every request and can inject faults
-(429, 5xx, digest mismatch, …). Chart repositories come from
-`internal/testutil/fakerepo`: an `index.yaml` plus archives, with a request
-log (marking requests that carried credentials), basic auth and queued error
-statuses. `internal/testutil.WriteChartTgz` builds a
-real chart archive for store/materialize tests.
+Unit tests use no network. `internal/testutil/fakeregistry` gives the
+registry behavior. It is an in-memory OCI registry that records each request
+and can inject faults (429, 5xx, digest mismatch, …).
 
-### Integration tests — `test/integration/`
+`internal/testutil/fakerepo` gives the chart repositories. It serves an
+`index.yaml` and archives. It has a request log that marks the requests with
+credentials, basic auth and queued error statuses.
+`internal/testutil.WriteChartTgz` makes a real chart archive for the store and
+materialize tests.
 
-Build tag `integration`. They run forge against the local registry
-(`localhost:5001`) and chart repository (`localhost:5002`) through counting
-reverse proxies, with no `repositories.yaml`, and assert:
+### Integration tests (`test/integration/`)
 
-- cold `dep build` makes at most `2 × unique OCI charts + 1 × unique
-  chart-repository charts + 1 per source` requests;
-- the `-o json` report's `registries[].requests` add up to exactly what the
-  proxies counted;
-- warm `dep build` makes **zero** requests, reports no hosts, and every
-  dependency is `cached` (`local` for `file://`);
-- `charts/` has one entry per unique chart;
-- after `cache gc` empties the cache, `dep build` is cold again and within
-  the cold budget;
-- `dep tree` / `dep why` make **zero** requests, and `dep outdated` at most
-  one `tags/list` per OCI repository (+ one auth round per registry) and one
-  `index.yaml` per chart repository.
+The integration tests use the build tag `integration`. They run forge against
+the local registry (`localhost:5001`) and the local chart repository
+(`localhost:5002`) through counting reverse proxies. They use no
+`repositories.yaml`. They assert that:
 
-If you change fetch or auth ordering and these fail, the request budget
-regressed — see [Architecture → Request budget](architecture.md#request-budget).
+- a cold `dep build` sends at most `2 × unique OCI charts + 1 × unique
+  chart-repository charts + 1 per source` requests.
+- the sum of `registries[].requests` in the `-o json` report is exactly the
+  count of the proxies.
+- a warm `dep build` sends **zero** requests and reports no hosts. Each
+  dependency is `cached` (`local` for `file://`).
+- `charts/` has one entry for each unique chart.
+- after `cache gc` empties the cache, `dep build` is cold again and stays in
+  the cold budget.
+- `dep tree` and `dep why` send **zero** requests. `dep outdated` sends at
+  most one `tags/list` for each OCI repository (+ one auth round for each
+  registry) and one `index.yaml` for each chart repository.
 
-### Compatibility gate — `scripts/compat.sh`
+If you change the order of fetch or auth steps and these tests fail, the
+request budget is worse. See
+[Architecture → Request budget](architecture.md#request-budget).
 
-For every fixture × {`update`, `build`} × {Helm 4, Helm 3}, runs Helm and forge
-on separate copies and diffs:
+### Compatibility gate (`scripts/compat.sh`)
 
-- `charts/` listing
-- sha256 of every downloaded archive; for archives packaged from `file://`
-  directories, a hash of member names and contents (gzip bytes depend on the
-  Go version each binary was built with, and Helm 3 stamps tar entries with
-  the current time)
+For each combination of fixture × {`update`, `build`} × {Helm 4, Helm 3}, the
+script runs Helm and forge on separate copies. It compares:
+
+- the `charts/` listing
+- the sha256 of each downloaded archive. For archives that forge packages
+  from `file://` directories, it compares a hash of the member names and
+  contents. (The gzip bytes depend on the Go version of each binary, and
+  Helm 3 writes the current time into the tar entries.)
 - `Chart.lock` without `generated:`
-- `helm template` output
+- the `helm template` output
 
-Fixtures using the chart repository get `helm repo add fixtures …` in Helm's
-isolated config first, because `helm dependency build` refuses unregistered
-repositories; forge runs with an empty config.
+For fixtures that use the chart repository, the script first runs
+`helm repo add fixtures …` in the isolated config of Helm. This is necessary
+because `helm dependency build` rejects repositories that are not added.
+forge runs with an empty config.
 
-Override binaries with `FORGE=…` and `HELMS="helm /path/to/helm3"`.
+To use different binaries, set `FORGE=…` and `HELMS="helm /path/to/helm3"`.
 
-### Benchmark — `scripts/bench.sh`
+### Benchmark (`scripts/bench.sh`)
 
-40 dependencies (`bench-00` … `bench-39`) behind toxiproxy adding 50 ms to
-every registry response. Compares `helm dependency build`, cold forge and warm
-forge with hyperfine; results go to `bench/results.md`.
+The benchmark uses 40 dependencies (`bench-00` … `bench-39`) behind
+toxiproxy. toxiproxy adds 50 ms to each registry response. hyperfine compares
+`helm dependency build`, cold forge and warm forge. The results go to
+`bench/results.md`.
 
-Targets (the script fails if missed):
+The script fails if forge does not meet these targets:
 
-- cold forge ≥ 5× faster than helm
-- warm forge < 1 s
+- cold forge is ≥ 5× faster than helm
+- warm forge takes < 1 s
 
-`RUNS=10 make bench` changes the number of runs.
+To change the number of runs, use `RUNS=10 make bench`.
 
-The README's figure is a separate, real-world measurement: a parent chart with
-50 subcharts against a remote registry, forge with 14 of them already cached,
-helm with `--skip-refresh`:
+The figure in the README is a separate measurement from real use. It used a
+parent chart with 50 subcharts and a remote registry. forge had 14 of the
+subcharts in its cache already. helm ran with `--skip-refresh`:
 
 ![forge vs helm: 4.6 s vs 30.4 s for 50 subcharts](images/benchmark.png)
 
@@ -130,71 +137,77 @@ helm with `--skip-refresh`:
 
 | Path | Contents |
 |---|---|
-| `testdata/src/` | Dependency charts pushed by `scripts/fixtures.sh`: `dep-a` (1.0.0, 1.1.0, 1.2.0, 2.0.0), `dep-b` (0.1.0, 0.2.0-rc.1), `dep-c` (1.0.0+build.1), plus 40 generated `bench-NN`. `dep-a` and `dep-b` are also served from a chart repository (`.chartrepo/`, nginx on `localhost:5002`) |
-| `testdata/charts/<fixture>/` | Parent charts, one feature each: `alias`, `build-metadata`, `condition-tags`, `exact`, `file-local` (chart in `local-dep/`), `http-mixed`, `http-ranges`, `nodeps`, `prerelease`, `ranges`, `stale` |
-| `testdata/seeds/<fixture>/` | Pre-existing `charts/` contents copied in before a run (e.g. `stale`) |
+| `testdata/src/` | Dependency charts that `scripts/fixtures.sh` pushes: `dep-a` (1.0.0, 1.1.0, 1.2.0, 2.0.0), `dep-b` (0.1.0, 0.2.0-rc.1), `dep-c` (1.0.0+build.1), plus 40 generated `bench-NN`. A chart repository (`.chartrepo/`, nginx on `localhost:5002`) also serves `dep-a` and `dep-b` |
+| `testdata/charts/<fixture>/` | Parent charts, one feature for each chart: `alias`, `build-metadata`, `condition-tags`, `exact`, `file-local` (chart in `local-dep/`), `http-mixed`, `http-ranges`, `nodeps`, `prerelease`, `ranges`, `stale` |
+| `testdata/seeds/<fixture>/` | `charts/` contents that the scripts copy in before a run (for example, `stale`) |
 | `testdata/golden/<fixture>/` | Helm-generated `Chart.yaml` + `Chart.lock` |
-| `internal/cli/testdata/json/` | `-o json` output goldens (durations, paths and placement normalised). Regenerate with `go test ./internal/cli -update` and review the diff |
+| `internal/cli/testdata/json/` | Goldens for the `-o json` output (with normalised durations, paths and placement). To regenerate them, run `go test ./internal/cli -update`, then review the diff |
 
 ### Adding a fixture
 
-1. Create `testdata/charts/<name>/Chart.yaml` pointing at
+1. Create `testdata/charts/<name>/Chart.yaml`. Point it to
    `oci://localhost:5001/charts` or `http://localhost:5002`. A `file://`
-   dependency must live inside the fixture directory (not in `charts/`),
-   because the scripts copy one fixture directory at a time. Helm cannot take
-   one chart name from both an OCI registry and a chart repository.
-2. If it needs new dependency versions, add them to `scripts/fixtures.sh`.
-3. If it needs pre-existing `charts/` content, put it in `testdata/seeds/<name>/`.
-4. Run `make golden` — real Helm writes `testdata/golden/<name>/`.
-5. Run `make compat` — forge must match.
-6. Add it to the fixture list in `test/integration/e2e_test.go` if it should
-   be covered by request-count checks.
+   dependency must be in the fixture directory (not in `charts/`), because
+   the scripts copy one fixture directory at a time. Helm cannot get one
+   chart name from both an OCI registry and a chart repository.
+2. If the fixture needs new dependency versions, add them to
+   `scripts/fixtures.sh`.
+3. If the fixture needs `charts/` content before the run, put it in
+   `testdata/seeds/<name>/`.
+4. Run `make golden`. Real Helm writes `testdata/golden/<name>/`.
+5. Run `make compat`. The output of forge must match.
+6. If the request-count checks must cover the fixture, add it to the fixture
+   list in `test/integration/e2e_test.go`.
 
-Goldens are Helm's output. Never edit them by hand; if forge disagrees,
-forge is wrong.
+Goldens are the output of Helm. Never edit them by hand. If forge does not
+agree with them, forge is wrong.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on pushes and PRs to `main`, manually
-(`workflow_dispatch`), and as the first stage of a release (`workflow_call`):
+`.github/workflows/ci.yml` runs on pushes and PRs to `main`. You can also
+start it manually (`workflow_dispatch`). It is also the first stage of a
+release (`workflow_call`):
 
 | Job | Runs on | Does |
 |---|---|---|
-| `unit` | ubuntu, macos | `go test -race ./...` via gotestsum → JUnit test report; on ubuntu also cross-compiles for linux/darwin/windows × amd64/arm64 |
+| `unit` | ubuntu, macos | `go test -race ./...` with gotestsum → JUnit test report. On ubuntu, it also cross-compiles for linux/darwin/windows × amd64/arm64 |
 | `integration` | ubuntu | `make fixtures`, integration tests → JUnit test report, `make compat` → summary table, `make plugin-smoke` |
 | `plugin` | ubuntu, macos, windows × Helm 3.22 / 4.1 | `scripts/plugin-smoke.sh`: install this checkout as a Helm plugin, checksum rejection, `helm forge --version` |
-| `summary` | ubuntu | Job results in the run summary; fails if any job failed |
+| `summary` | ubuntu | Job results in the run summary. Fails if a job failed |
 
-`.github/workflows/docs.yml` builds the docs site (MkDocs Material, config in
-`mkdocs.yml`, pinned in `docs/requirements.txt`) with `mkdocs build --strict`
-on PRs that touch `docs/` or `mkdocs.yml`, and on `main` deploys it to GitHub
-Pages (<https://mmpyro.github.io/forge/>). The pages in `docs/` stay readable
-on github.com; site-only extras (tabs, annotated code, mermaid clicks) degrade
-to plain Markdown there.
+`.github/workflows/docs.yml` builds the docs site with `mkdocs build
+--strict`. The site uses MkDocs Material. Its config is in `mkdocs.yml`, and
+`docs/requirements.txt` pins its versions. The workflow runs on PRs that
+change `docs/` or `mkdocs.yml`. On `main`, it also deploys the site to GitHub
+Pages (<https://mmpyro.github.io/forge/>). You can still read the pages in
+`docs/` on github.com. There, the site features (tabs, annotated code,
+mermaid clicks) show as plain Markdown.
 
 ## Releasing
 
 `.github/workflows/release.yml` runs when a `v*.*.*` tag is pushed:
 
-1. `plugin-version` — `plugin.yaml`'s `version` must equal the tag (without
-   `v`); `ci` — the full CI workflow above. Nothing is built if either fails.
-2. `build` — matrix on ubuntu, macos and windows runners: `CGO_ENABLED=0`
-   binaries for linux/darwin/windows × amd64/arm64, version set to the tag.
-   The runner-native binary is smoke-tested (`forge --version` must print the
-   tag).
-3. `release` — `checksums.txt`, release notes from commits since the previous
-   tag, GitHub release with all binaries attached. Tags containing `-`
-   (e.g. `v1.0.0-rc.1`) become prereleases. The run summary lists files,
-   sizes, sha256 and changes.
-4. `plugin-smoke` — on ubuntu, macos and windows × Helm 3 / Helm 4:
+1. `plugin-version` and `ci`. `plugin-version` checks that the `version` in
+   `plugin.yaml` is equal to the tag (without `v`). `ci` is the full CI
+   workflow above. If one of them fails, the workflow builds nothing.
+2. `build`: a matrix on ubuntu, macos and windows runners. It builds
+   `CGO_ENABLED=0` binaries for linux/darwin/windows × amd64/arm64, with the
+   tag as the version. It runs a smoke test on the native binary of the
+   runner (`forge --version` must print the tag).
+3. `release`: it makes `checksums.txt` and release notes from the commits
+   after the previous tag. It makes a GitHub release with all binaries
+   attached. A tag that contains `-` (for example, `v1.0.0-rc.1`) becomes a
+   prerelease. The run summary lists the files, sizes, sha256 and changes.
+4. `plugin-smoke`: on ubuntu, macos and windows × Helm 3 / Helm 4, it runs
    `helm plugin install https://github.com/mmpyro/forge --version <tag>`
-   (`--verify=false` on Helm 4), then `helm forge --version` must print the tag.
+   (`--verify=false` on Helm 4). Then `helm forge --version` must print the
+   tag.
 
-To cut a release:
+To make a release:
 
-1. Set `version:` in `plugin.yaml` to the new version (no `v`), update the
+1. Set `version:` in `plugin.yaml` to the new version (no `v`). Change the
    version in the install commands and download links in `README.md`,
-   `docs/index.md` and `docs/usage.md`, and merge that to `main`.
+   `docs/index.md` and `docs/usage.md`. Merge these changes to `main`.
 2. Tag and push:
 
 ```sh
@@ -202,17 +215,19 @@ git tag v2.2.0
 git push origin v2.2.0
 ```
 
-Asset names (`forge-<os>-<arch>`, `.exe` on Windows) are what the download
-links in `README.md` and the plugin install hooks
-(`scripts/install-plugin.sh`, `scripts/install-plugin.ps1`) use. Keep them in sync.
+The download links in `README.md` and the plugin install hooks
+(`scripts/install-plugin.sh`, `scripts/install-plugin.ps1`) use the asset
+names (`forge-<os>-<arch>`, `.exe` on Windows). Keep them in sync.
 
 ## Invariants to keep in mind
 
 - `charts/` changes only if every dependency succeeded.
 - Staging lives at `<chart>/.forge-staging/`, never inside `charts/`.
-- Store writes: `tmp/` then rename. No locks.
+- Store writes go to `tmp/`, then a rename moves them into place. There are
+  no locks.
 - Unsupported repositories (none, other schemes, unknown `@name`, missing
-  `file://` directory) fail before any network call.
-- Exit codes: `0` ok, `1` failure (`engine.DependencyError` lists each), `2`
-  usage (`cli.usageError`).
-- Credentials only from Helm's registry config and `repositories.yaml`.
+  `file://` directory) fail before the first network call.
+- Exit codes: `0` ok, `1` failure (`engine.DependencyError` lists each
+  failure), `2` usage (`cli.usageError`).
+- forge gets credentials only from Helm's registry config and
+  `repositories.yaml`.
